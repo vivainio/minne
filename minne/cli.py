@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from minne import copilot
+from minne import copilot, vscode
 from minne.clip import add_clip, digest_clip
 from minne.install import install_skills
 from minne.reader import iter_records, iter_session_files, project_dir_for_cwd, projects_root
@@ -192,6 +192,25 @@ def cmd_ingest(args: argparse.Namespace) -> None:
                 out = existing[session_id]
             else:
                 repo = resolve_repo(copilot.session_cwd(sdir))
+                repo_dir = inbox / "chats" / repo
+                repo_dir.mkdir(parents=True, exist_ok=True)
+                out = repo_dir / f"{session_id}.md"
+            out.write_text(md, encoding="utf-8")
+            print(f"  wrote {out}  ({len(md)} bytes)")
+            written += 1
+
+        for storage_dir, jl in vscode.iter_session_jsonls():
+            if cutoff is not None and vscode.session_mtime(jl) < cutoff:
+                continue
+            session_id = jl.stem
+            md = vscode.render_session(jl, storage_dir)
+            if not md:
+                skipped += 1
+                continue
+            if session_id in existing:
+                out = existing[session_id]
+            else:
+                repo = resolve_repo(vscode.session_cwd(storage_dir))
                 repo_dir = inbox / "chats" / repo
                 repo_dir.mkdir(parents=True, exist_ok=True)
                 out = repo_dir / f"{session_id}.md"
