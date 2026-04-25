@@ -1,0 +1,27 @@
+[project]
+name = "minne"
+version = "0.1.0"
+description = "Agent memory system that ingests Claude Code conversation history per project"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+minne = "minne.cli:main"
+
+[tool.uv]
+package = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle errors
+    "F",      # pyflakes
+    "I",      # isort
+    "UP",     # pyupgrade
+]
+
+[tool.ruff.format]
+quote-style = "double"
