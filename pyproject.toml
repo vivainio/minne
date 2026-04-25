@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "minne"
-version = "0.1.0"
+version = "0.0.0.dev"
 description = "Agent memory system that ingests Claude Code conversation history per project"
 requires-python = ">=3.11"
 dependencies = []
