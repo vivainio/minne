@@ -80,14 +80,20 @@ def _inject_started(summary: str, started: str) -> str:
     return f"{head}\nstarted: {started}{rest}"
 
 
-def summarize_file(transcript: Path, model: str = HAIKU_MODEL) -> Path:
-    """Summarize a transcript and produce `summary.md` next to it.
+def summarize_file(
+    transcript: Path,
+    target_repo_dir: Path | None = None,
+    model: str = HAIKU_MODEL,
+) -> Path:
+    """Summarize a transcript and produce `summary.md`.
 
     On success with a slug + date, the session is wrapped into a
-    `<date>-<slug>/` directory containing `chat.md` and `summary.md`. If
-    the transcript is already inside such a dir, only the dir name is
-    reconciled; if no slug is returned, the summary is written as a flat
-    sibling `<stem>.summary.md`.
+    `<date>-<slug>/` directory under `target_repo_dir` (or, if not given,
+    under the transcript's own repo dir) containing `chat.md` and
+    `summary.md`. If the transcript was elsewhere it is moved.
+
+    If the model returns no slug, the summary is written as a flat sibling
+    `<stem>.summary.md` next to the transcript.
 
     Returns the final summary path."""
     if shutil.which("claude") is None:
@@ -110,7 +116,8 @@ def summarize_file(transcript: Path, model: str = HAIKU_MODEL) -> Path:
     date = started[:10] if started and len(started) >= 10 else None
 
     in_session_dir = transcript.name == "chat.md"
-    repo_dir = transcript.parent.parent if in_session_dir else transcript.parent
+    fallback_repo_dir = transcript.parent.parent if in_session_dir else transcript.parent
+    repo_dir = target_repo_dir or fallback_repo_dir
 
     if slug and date:
         target_dir = repo_dir / f"{date}-{slug}"
@@ -118,11 +125,11 @@ def summarize_file(transcript: Path, model: str = HAIKU_MODEL) -> Path:
             target_dir.mkdir(parents=True, exist_ok=True)
             new_chat = target_dir / "chat.md"
             if transcript != new_chat:
+                old_parent = transcript.parent
                 transcript.rename(new_chat)
-                # remove old empty session dir if we moved out of one
                 if in_session_dir:
                     try:
-                        transcript.parent.rmdir()
+                        old_parent.rmdir()
                     except OSError:
                         pass
             summary_path = target_dir / "summary.md"

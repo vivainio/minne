@@ -50,28 +50,23 @@ Summaries are written by Haiku and meant to be searched, not read. They describe
 
 ## Layout
 
-After ingest only — flat per-session file under the resolved repo:
+`~/minne/` has two roots: `inbox/` is the landing zone for fresh ingests, `store/` holds summarized sessions.
 
 ```
-~/minne/inbox/
-├── minne/
-│   └── 7890dec8-….md
-├── nspect/
-│   └── ...
-└── _unknown/    # sessions whose original cwd no longer exists
+~/minne/
+├── inbox/
+│   └── <repo>/
+│       └── <session-id>.md          # raw, awaiting summarize
+└── store/
+    └── <repo>/
+        └── <date>-<slug>/
+            ├── chat.md              # final transcript
+            └── summary.md           # keyword index
 ```
 
-After summarize — wrapped into `<date>-<slug>/` with `chat.md` and `summary.md`:
+`minne ingest` writes new sessions into `inbox/` flat. `minne summarize` runs Haiku, wraps each session into `store/<repo>/<date>-<slug>/`, and moves the chat there. The slug comes from Haiku via `slug:` in summary front matter; the date comes from the transcript's `started:`. Re-running `minne ingest` looks up existing transcripts by `session_id:` in their front matter (across both inbox and store) and updates them in place.
 
-```
-~/minne/inbox/
-└── minne/
-    └── 2026-04-25-minne-agent-memory-system/
-        ├── chat.md
-        └── summary.md
-```
-
-The slug is proposed by Haiku in the summary's YAML front matter; the date is taken from the transcript's `started:`. Re-running `minne ingest` finds existing transcripts via `session_id:` in their YAML front matter and updates them in place — no duplicates.
+Override roots with `--inbox PATH` / `--store PATH` or set `MINNE_HOME` (defaults: `~/minne/inbox`, `~/minne/store`).
 
 ## Requirements
 

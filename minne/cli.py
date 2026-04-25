@@ -11,8 +11,16 @@ from minne.repo import resolve_repo
 from minne.summarize import summarize_file
 
 
+def default_root() -> Path:
+    return Path(os.environ.get("MINNE_HOME", str(Path.home() / "minne")))
+
+
 def default_inbox() -> Path:
-    return Path(os.environ.get("MINNE_HOME", str(Path.home() / "minne"))) / "inbox"
+    return default_root() / "inbox"
+
+
+def default_store() -> Path:
+    return default_root() / "store"
 
 
 def cmd_scan(args: argparse.Namespace) -> None:
@@ -40,20 +48,27 @@ def _summary_for(transcript: Path) -> Path:
     return transcript.with_name(f"{transcript.stem}.summary.md")
 
 
-def _existing_by_session_id(inbox: Path) -> dict[str, Path]:
-    """Map session_id -> existing transcript path. Walks both flat
-    `<repo>/<session-id>.md` and wrapped `<repo>/<date>-<slug>/chat.md`."""
+def _repo_of(transcript: Path) -> str:
+    """Repo dir name from a transcript path. inbox/<repo>/<id>.md -> repo;
+    store/<repo>/<date>-<slug>/chat.md -> repo."""
+    return transcript.parent.parent.name if transcript.name == "chat.md" else transcript.parent.name
+
+
+def _scan_session_ids(*roots: Path) -> dict[str, Path]:
     out: dict[str, Path] = {}
-    for p in inbox.rglob("*.md"):
-        if not _is_transcript(p):
+    for root in roots:
+        if not root.is_dir():
             continue
-        try:
-            head = p.read_text(encoding="utf-8", errors="replace")[:512]
-        except OSError:
-            continue
-        m = re.search(r"^session_id:\s*(\S+)", head, re.MULTILINE)
-        if m:
-            out[m.group(1)] = p
+        for p in root.rglob("*.md"):
+            if not _is_transcript(p):
+                continue
+            try:
+                head = p.read_text(encoding="utf-8", errors="replace")[:512]
+            except OSError:
+                continue
+            m = re.search(r"^session_id:\s*(\S+)", head, re.MULTILINE)
+            if m:
+                out[m.group(1)] = p
     return out
 
 
@@ -74,8 +89,9 @@ def _project_dirs(args: argparse.Namespace) -> list[Path]:
 
 def cmd_ingest(args: argparse.Namespace) -> None:
     inbox: Path = args.inbox
+    store: Path = args.store
     inbox.mkdir(parents=True, exist_ok=True)
-    existing = _existing_by_session_id(inbox)
+    existing = _scan_session_ids(inbox, store)
     written = 0
     skipped = 0
     for pdir in _project_dirs(args):
@@ -96,32 +112,47 @@ def cmd_ingest(args: argparse.Namespace) -> None:
             out.write_text(md, encoding="utf-8")
             print(f"  wrote {out}  ({len(md)} bytes)")
             written += 1
-    print(f"done: {written} written, {skipped} empty, into {inbox}")
+    print(f"done: {written} written, {skipped} empty")
 
 
 def cmd_summarize(args: argparse.Namespace) -> None:
+    inbox: Path = args.inbox
+    store: Path = args.store
     target: Path = args.path
+
     if target.is_file():
         targets = [target]
     else:
-        chats = [p for p in target.rglob("*.md") if _is_transcript(p)]
+        roots = [target] if target != inbox else [inbox, store]
+        chats: list[Path] = []
+        for r in roots:
+            if r.is_dir():
+                chats.extend(p for p in r.rglob("*.md") if _is_transcript(p))
         chats.sort(key=lambda p: p.stat().st_mtime)
         if not args.all:
             chats = [p for p in chats if not _summary_for(p).exists()]
         targets = chats
         if not targets:
-            print(f"nothing to summarize in {target}")
+            print("nothing to summarize")
             return
 
     for t in targets:
         print(f"summarizing {t} ...")
-        out = summarize_file(t)
+        target_repo_dir = store / _repo_of(t)
+        out = summarize_file(t, target_repo_dir=target_repo_dir)
         print(f"  wrote {out}")
 
 
 def cmd_install_skills(args: argparse.Namespace) -> None:
     for dest in install_skills(args.dest):
         print(f"installed: {dest}")
+
+
+def _add_root_args(p: argparse.ArgumentParser) -> None:
+    p.add_argument("--inbox", type=Path, default=default_inbox(),
+                   help="landing zone for fresh ingests (default: $MINNE_HOME/inbox)")
+    p.add_argument("--store", type=Path, default=default_store(),
+                   help="store for summarized sessions (default: $MINNE_HOME/store)")
 
 
 def main() -> None:
@@ -132,18 +163,18 @@ def main() -> None:
     p_scan.add_argument("--cwd", type=Path, default=None)
     p_scan.set_defaults(func=cmd_scan)
 
-    p_ing = sub.add_parser("ingest", help="Ingest sessions into <inbox>/<repo>/")
+    p_ing = sub.add_parser("ingest", help="Ingest sessions into inbox/<repo>/")
     p_ing.add_argument("--cwd", type=Path, default=None,
                        help="only ingest sessions from this cwd (default: all projects)")
-    p_ing.add_argument("--inbox", type=Path, default=default_inbox(),
-                       help=f"inbox root (default: $MINNE_HOME/inbox or ~/minne/inbox)")
+    _add_root_args(p_ing)
     p_ing.set_defaults(func=cmd_ingest)
 
-    p_sum = sub.add_parser("summarize", help="Summarize transcripts via `claude -p` Haiku")
+    p_sum = sub.add_parser("summarize", help="Summarize transcripts via `claude -p` Haiku; move to store/")
     p_sum.add_argument("path", type=Path, nargs="?", default=default_inbox(),
-                       help="transcript file, or directory tree (default: inbox)")
+                       help="transcript file or directory (default: inbox; sweeps inbox+store)")
     p_sum.add_argument("--all", action="store_true",
-                       help="re-summarize even if .summary.md already exists")
+                       help="re-summarize even if a summary already exists")
+    _add_root_args(p_sum)
     p_sum.set_defaults(func=cmd_summarize)
 
     p_inst = sub.add_parser("install-skills", help="Install Claude Code skill into ~/.claude/skills/")
