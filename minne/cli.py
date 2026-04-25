@@ -11,7 +11,7 @@ from minne.clip import add_clip, digest_clip
 from minne.install import install_skills
 from minne.reader import iter_records, iter_session_files, project_dir_for_cwd, projects_root
 from minne.render import render_session
-from minne.repo import resolve_repo
+from minne.repo import NOGIT, resolve_repo
 from minne.summarize import summarize_file
 
 
@@ -27,8 +27,18 @@ def default_store() -> Path:
     return default_root() / "store"
 
 
+_NON_TRANSCRIPT_NAMES = {"summary.md", "journal.md"}
+
+
 def _is_transcript(p: Path) -> bool:
-    return p.suffix == ".md" and not p.name.endswith(".summary.md") and p.name != "summary.md"
+    if p.suffix != ".md":
+        return False
+    if p.name in _NON_TRANSCRIPT_NAMES:
+        return False
+    if p.name.endswith(".summary.md") or p.name.endswith(".journal.md"):
+        return False
+    # Skip clip markdowns living under any "clips/" subdir (linked or orphan).
+    return "clips" not in p.parts
 
 
 def _parse_since(s: str) -> datetime:
@@ -65,8 +75,16 @@ def _summary_for(transcript: Path) -> Path:
 
 def _repo_of(transcript: Path) -> str:
     """Repo dir name from a transcript path. inbox/<repo>/<id>.md -> repo;
-    store/chats/<repo>/<date>-<slug>/chat.md -> repo."""
+    store/chats/<repo>/<date>-<slug>/chat.md -> repo;
+    store/chats/nogit/<cat>/<date>-<slug>/chat.md -> _nogit (so re-digest
+    routes back through the nogit classifier)."""
     if transcript.name == "chat.md":
+        # nogit layout has one extra level: .../nogit/<cat>/<date>-<slug>/chat.md
+        try:
+            if transcript.parent.parent.parent.name == "nogit":
+                return NOGIT
+        except IndexError:
+            pass
         return transcript.parent.parent.name
     return transcript.parent.name
 
@@ -162,6 +180,13 @@ def cmd_ingest(args: argparse.Namespace) -> None:
     print(f"done: {written} written, {skipped} empty")
 
 
+def _existing_nogit_categories(store: Path) -> list[str]:
+    root = store / "chats" / "nogit"
+    if not root.is_dir():
+        return []
+    return sorted(d.name for d in root.glob("*") if d.is_dir())
+
+
 def cmd_digest(args: argparse.Namespace) -> None:
     inbox: Path = args.inbox
     store: Path = args.store
@@ -186,8 +211,13 @@ def cmd_digest(args: argparse.Namespace) -> None:
     jobs = max(1, args.jobs)
 
     def _one(t: Path) -> tuple[Path, Path | None, BaseException | None]:
-        target_dir = store / "chats" / _repo_of(t)
+        repo = _repo_of(t)
         try:
+            if repo == NOGIT:
+                target_dir = store / "chats" / "nogit"
+                cats = _existing_nogit_categories(store)
+                return t, summarize_file(t, target_repo_dir=target_dir, nogit_categories=cats), None
+            target_dir = store / "chats" / repo
             return t, summarize_file(t, target_repo_dir=target_dir), None
         except BaseException as e:
             return t, None, e
@@ -281,24 +311,10 @@ def _in_git_repo(cwd: Path) -> bool:
         return False
 
 
-def _list_one_repo(store: Path, repo: str, cutoff: str | None) -> bool:
-    chat_root = store / "chats" / repo
-    clip_root = store / "clips" / repo
-
-    chat_dirs = sorted(
-        (d for d in chat_root.glob("*") if d.is_dir()),
-        key=lambda d: d.name,
-        reverse=True,
-    ) if chat_root.is_dir() else []
-    if cutoff:
-        chat_dirs = [d for d in chat_dirs if d.name[:10] >= cutoff]
-
-    orphan_clips = sorted(clip_root.glob("*.md")) if clip_root.is_dir() else []
-
+def _list_chat_dirs(label: str, chat_dirs: list[Path], orphan_clips: list[Path]) -> bool:
     if not chat_dirs and not orphan_clips:
         return False
-
-    print(f"\n{repo}/")
+    print(f"\n{label}/")
     for d in chat_dirs:
         clips = sorted((d / "clips").glob("*.md")) if (d / "clips").is_dir() else []
         tag = f"  [{len(clips)} clip{'s' if len(clips) != 1 else ''}]" if clips else ""
@@ -309,10 +325,43 @@ def _list_one_repo(store: Path, repo: str, cutoff: str | None) -> bool:
         for c in clips:
             print(f"    - {c.name}")
     if orphan_clips:
-        print(f"  clips (no chat):")
+        print("  clips (no chat):")
         for c in orphan_clips:
             print(f"    - {c.name}")
     return True
+
+
+def _list_one_repo(store: Path, repo: str, cutoff: str | None) -> bool:
+    chat_root = store / "chats" / repo
+    clip_root = store / "clips" / repo
+
+    if repo == "nogit" and chat_root.is_dir():
+        any_listed = False
+        for cat_dir in sorted(d for d in chat_root.glob("*") if d.is_dir()):
+            chat_dirs = sorted(
+                (d for d in cat_dir.glob("*") if d.is_dir()),
+                key=lambda d: d.name,
+                reverse=True,
+            )
+            if cutoff:
+                chat_dirs = [d for d in chat_dirs if d.name[:10] >= cutoff]
+            if _list_chat_dirs(f"nogit/{cat_dir.name}", chat_dirs, []):
+                any_listed = True
+        orphan_clips = sorted(clip_root.glob("*.md")) if clip_root.is_dir() else []
+        if orphan_clips:
+            _list_chat_dirs("nogit (orphan clips)", [], orphan_clips)
+            any_listed = True
+        return any_listed
+
+    chat_dirs = sorted(
+        (d for d in chat_root.glob("*") if d.is_dir()),
+        key=lambda d: d.name,
+        reverse=True,
+    ) if chat_root.is_dir() else []
+    if cutoff:
+        chat_dirs = [d for d in chat_dirs if d.name[:10] >= cutoff]
+    orphan_clips = sorted(clip_root.glob("*.md")) if clip_root.is_dir() else []
+    return _list_chat_dirs(repo, chat_dirs, orphan_clips)
 
 
 def cmd_ls(args: argparse.Namespace) -> None:
@@ -359,15 +408,22 @@ def cmd_journal(args: argparse.Namespace) -> None:
 
     repos = [args.repo] if args.repo else sorted(d.name for d in chats_root.glob("*") if d.is_dir())
 
-    # entries: list of (date, repo, slug, journal_text)
+    # entries: list of (date, repo_label, slug, journal_text)
     entries: list[tuple[str, str, str, str]] = []
     for repo in repos:
         repo_root = chats_root / repo
         if not repo_root.is_dir():
             continue
-        for chat_dir in repo_root.glob("*"):
-            if not chat_dir.is_dir():
-                continue
+        # nogit chats live one level deeper: nogit/<category>/<date>-<slug>/
+        if repo == "nogit":
+            chat_dirs = [
+                (f"nogit/{cat.name}", d)
+                for cat in repo_root.glob("*") if cat.is_dir()
+                for d in cat.glob("*") if d.is_dir()
+            ]
+        else:
+            chat_dirs = [(repo, d) for d in repo_root.glob("*") if d.is_dir()]
+        for label, chat_dir in chat_dirs:
             name = chat_dir.name
             if len(name) < 11 or name[10] != "-":
                 continue
@@ -383,7 +439,7 @@ def cmd_journal(args: argparse.Namespace) -> None:
             except OSError:
                 continue
             if text:
-                entries.append((date, repo, slug, text))
+                entries.append((date, label, slug, text))
 
     if not entries:
         print("(no journal entries match)")

@@ -4,19 +4,18 @@ from pathlib import Path
 import subprocess
 
 
-UNKNOWN = "_unknown"
+NOGIT = "_nogit"
 
 
 def resolve_repo(cwd: str | None) -> str:
-    """Return a short repo name for `cwd`. Tries `git rev-parse --show-toplevel`
-    when the directory exists; falls back to the cwd basename, or `_unknown`
-    when the path is gone."""
+    """Return a short repo name for `cwd`. Returns the toplevel basename
+    when `cwd` is inside a git work tree; otherwise the sentinel `_nogit`,
+    which the digest pipeline then classifies into a topic category."""
     if not cwd:
-        return UNKNOWN
+        return NOGIT
     p = Path(cwd)
     if not p.is_dir():
-        # path no longer exists; use basename as a hint
-        return p.name or UNKNOWN
+        return NOGIT
     try:
         out = subprocess.run(
             ["git", "-C", str(p), "rev-parse", "--show-toplevel"],
@@ -29,4 +28,4 @@ def resolve_repo(cwd: str | None) -> str:
             return Path(top).name
     except (subprocess.CalledProcessError, FileNotFoundError):
         pass
-    return p.name or UNKNOWN
+    return NOGIT

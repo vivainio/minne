@@ -81,12 +81,20 @@ _SESSION_ID_RE = re.compile(r"^session_id:\s*(\S+)\s*$", re.MULTILINE)
 
 
 def _index_chats_by_session(store: Path, repo: str) -> dict[str, Path]:
-    """Map session_id → chat directory for digested chats in this repo."""
-    repo_root = store / "chats" / repo
+    """Map session_id → chat directory for digested chats in this repo.
+
+    For nogit clips (repo == "_nogit"), search across all categories under
+    `store/chats/nogit/<category>/<date>-<slug>/chat.md`."""
+    if repo == "_nogit":
+        repo_root = store / "chats" / "nogit"
+        glob = "*/*/chat.md"
+    else:
+        repo_root = store / "chats" / repo
+        glob = "*/chat.md"
     if not repo_root.is_dir():
         return {}
     index: dict[str, Path] = {}
-    for chat in repo_root.glob("*/chat.md"):
+    for chat in repo_root.glob(glob):
         try:
             head = chat.read_text(encoding="utf-8", errors="replace")[:2000]
         except OSError:

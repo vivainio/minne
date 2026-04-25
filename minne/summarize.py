@@ -59,7 +59,22 @@ preamble, or closing remarks.
 
 PROMPT_TAIL = "\n</transcript>\n"
 
+NOGIT_PROMPT_EXTRA = """\
+This conversation is NOT tied to a git repository — it happened in
+miscellaneous shell or notes context. Classify it under a topical category
+so it can be filed alongside related miscellany.
+
+Existing categories (REUSE one of these whenever it fits, do not coin a
+near-duplicate):
+{categories}
+
+Add a `category:` field to the front matter, kebab-case, 1-3 words. Reuse
+an existing category whenever possible; only invent a new one when none
+fits.
+"""
+
 _SLUG_RE = re.compile(r"^slug:\s*(.+?)\s*$", re.MULTILINE)
+_CATEGORY_RE = re.compile(r"^category:\s*(.+?)\s*$", re.MULTILINE)
 _STARTED_RE = re.compile(r"^started:\s*(\S+)", re.MULTILINE)
 _SAFE_SLUG = re.compile(r"[^a-z0-9-]+")
 _JOURNAL_MARKER = re.compile(r"^={3,}\s*JOURNAL\s*={3,}\s*$", re.MULTILINE)
@@ -94,6 +109,15 @@ def _extract_slug(fm: str) -> str | None:
     return cleaned or None
 
 
+def _extract_category(fm: str) -> str | None:
+    m = _CATEGORY_RE.search(fm)
+    if not m:
+        return None
+    raw = m.group(1).strip().strip('"\'').lower()
+    cleaned = _SAFE_SLUG.sub("-", raw).strip("-")
+    return cleaned or None
+
+
 def _extract_started(fm: str) -> str | None:
     m = _STARTED_RE.search(fm)
     return m.group(1).strip() if m else None
@@ -116,6 +140,7 @@ def summarize_file(
     transcript: Path,
     target_repo_dir: Path | None = None,
     model: str = HAIKU_MODEL,
+    nogit_categories: list[str] | None = None,
 ) -> Path:
     """Summarize a transcript and produce `summary.md`.
 
@@ -131,9 +156,13 @@ def summarize_file(
     if shutil.which("claude") is None:
         raise RuntimeError("`claude` CLI not found on PATH")
     transcript_text = transcript.read_text(encoding="utf-8")
+    prompt_head = PROMPT_HEAD
+    if nogit_categories is not None:
+        cat_block = "\n".join(f"  - {c}" for c in nogit_categories) or "  (none yet — invent one)"
+        prompt_head = PROMPT_HEAD + "\n" + NOGIT_PROMPT_EXTRA.format(categories=cat_block)
     out = subprocess.run(
         ["claude", "--tools", "", "--model", model, "-p",
-         PROMPT_HEAD + transcript_text + PROMPT_TAIL],
+         prompt_head + transcript_text + PROMPT_TAIL],
         check=True,
         capture_output=True,
         text=True,
@@ -144,7 +173,8 @@ def summarize_file(
     if started:
         summary = _inject_started(summary, started)
 
-    slug = _extract_slug(_front_matter(summary))
+    summary_fm = _front_matter(summary)
+    slug = _extract_slug(summary_fm)
     date = started[:10] if started and len(started) >= 10 else None
 
     in_session_dir = transcript.name == "chat.md"
@@ -152,6 +182,10 @@ def summarize_file(
     # transcript at <root>/<id>.md → root is parent.
     fallback_root = transcript.parent.parent if in_session_dir else transcript.parent
     repo_dir = target_repo_dir or fallback_root
+
+    if nogit_categories is not None:
+        category = _extract_category(summary_fm) or "misc"
+        repo_dir = repo_dir / category
 
     if slug and date:
         target_dir = repo_dir / f"{date}-{slug}"
