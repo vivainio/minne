@@ -32,11 +32,14 @@ tldr: <one sentence, max ~100 chars, plain text, no surrounding quotes, what hap
 - ...
 
 ===JOURNAL===
-<2-4 sentences, first person ("I dug into…", "I ended up…"), past tense,
-plain prose, the kind of thing a developer would write in a personal diary
-at the end of the day: what was the goal, what was actually done, any
-gotcha or insight worth remembering. No bullet lists, no headings, no
-meta-commentary about this prompt.>
+<2-3 short sentences, ~50 words MAX, first person ("I dug into…",
+"I ended up…"), past tense, plain prose, the kind of one-paragraph
+note a developer would jot in a personal diary at end of day: the
+goal, the upshot, and at most one notable gotcha or insight. Skip
+specific code identifiers, function names, field names, and config
+keys — those belong in the keyword list above, not the diary. No
+bullet lists, no headings, no meta-commentary about this prompt.
+If you cannot stay under 50 words, you are doing it wrong.>
 
 The `tldr` is the only place in the front matter where outcome belongs.
 The body above ===JOURNAL=== must stay topic-only. Everything outcome,
