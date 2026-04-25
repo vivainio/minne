@@ -8,6 +8,12 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from minne.clip import add_clip, digest_clip
+from minne.copilot import (
+    iter_session_dirs as copilot_iter_session_dirs,
+    render_session as copilot_render_session,
+    session_cwd as copilot_session_cwd,
+    session_mtime as copilot_session_mtime,
+)
 from minne.install import install_skills
 from minne.reader import iter_records, iter_session_files, project_dir_for_cwd, projects_root
 from minne.render import render_session
@@ -177,6 +183,27 @@ def cmd_ingest(args: argparse.Namespace) -> None:
             out.write_text(md, encoding="utf-8")
             print(f"  wrote {out}  ({len(md)} bytes)")
             written += 1
+
+    if args.cwd is None:
+        for sdir in copilot_iter_session_dirs():
+            if cutoff is not None and copilot_session_mtime(sdir) < cutoff:
+                continue
+            session_id = sdir.name
+            md = copilot_render_session(sdir)
+            if not md:
+                skipped += 1
+                continue
+            if session_id in existing:
+                out = existing[session_id]
+            else:
+                repo = resolve_repo(copilot_session_cwd(sdir))
+                repo_dir = inbox / "chats" / repo
+                repo_dir.mkdir(parents=True, exist_ok=True)
+                out = repo_dir / f"{session_id}.md"
+            out.write_text(md, encoding="utf-8")
+            print(f"  wrote {out}  ({len(md)} bytes)")
+            written += 1
+
     print(f"done: {written} written, {skipped} empty")
 
 
