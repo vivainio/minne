@@ -2,8 +2,10 @@ import argparse
 from collections import Counter
 from pathlib import Path
 
+from minne.install import install_skills
 from minne.reader import iter_records, iter_session_files, project_dir_for_cwd
 from minne.render import render_session
+from minne.summarize import summarize_file
 
 
 def cmd_scan(args: argparse.Namespace) -> None:
@@ -39,6 +41,30 @@ def cmd_ingest(args: argparse.Namespace) -> None:
     print(f"done: {written} written, {skipped} empty, into {inbox}")
 
 
+def cmd_summarize(args: argparse.Namespace) -> None:
+    target: Path = args.path
+    if target.is_file():
+        targets = [target]
+    else:
+        mds = sorted(target.glob("*.md"), key=lambda p: p.stat().st_mtime)
+        targets = [p for p in mds if not p.name.endswith(".summary.md")]
+        if not args.all:
+            targets = [p for p in targets if not p.with_suffix(".summary.md").exists()]
+        if not targets:
+            print(f"nothing to summarize in {target}")
+            return
+
+    for t in targets:
+        print(f"summarizing {t} ...")
+        out = summarize_file(t)
+        print(f"  wrote {out}")
+
+
+def cmd_install_skills(args: argparse.Namespace) -> None:
+    for dest in install_skills(args.dest):
+        print(f"installed: {dest}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="minne")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -51,6 +77,18 @@ def main() -> None:
     p_ing.add_argument("--cwd", type=Path, default=None)
     p_ing.add_argument("--inbox", type=Path, default=Path("inbox"))
     p_ing.set_defaults(func=cmd_ingest)
+
+    p_sum = sub.add_parser("summarize", help="Summarize transcripts in inbox/ via `claude -p` Haiku")
+    p_sum.add_argument("path", type=Path, nargs="?", default=Path("inbox"),
+                       help="transcript file, or directory (default: inbox/)")
+    p_sum.add_argument("--all", action="store_true",
+                       help="re-summarize even if .summary.md already exists")
+    p_sum.set_defaults(func=cmd_summarize)
+
+    p_inst = sub.add_parser("install-skills", help="Install Claude Code skill into ~/.claude/skills/")
+    p_inst.add_argument("--dest", type=Path, default=None,
+                        help="override skills root (default: ~/.claude/skills)")
+    p_inst.set_defaults(func=cmd_install_skills)
 
     args = parser.parse_args()
     args.func(args)
