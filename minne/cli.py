@@ -9,6 +9,13 @@ from pathlib import Path
 
 from minne import copilot, vscode
 from minne.clip import add_clip, digest_clip
+from minne.config import (
+    digest_backend,
+    digest_model,
+    home_from_config,
+    inbox_from_config,
+    store_from_config,
+)
 from minne.install import install_skills
 from minne.reader import iter_records, iter_session_files, project_dir_for_cwd, projects_root
 from minne.render import render_session
@@ -17,15 +24,23 @@ from minne.summarize import summarize_file
 
 
 def default_root() -> Path:
-    return Path(os.environ.get("MINNE_HOME", str(Path.home() / "minne")))
+    env = os.environ.get("MINNE_HOME")
+    if env:
+        return Path(env)
+    cfg = home_from_config()
+    if cfg is not None:
+        return cfg
+    return Path.home() / "minne"
 
 
 def default_inbox() -> Path:
-    return default_root() / "inbox"
+    cfg = inbox_from_config()
+    return cfg if cfg is not None else default_root() / "inbox"
 
 
 def default_store() -> Path:
-    return default_root() / "store"
+    cfg = store_from_config()
+    return cfg if cfg is not None else default_root() / "store"
 
 
 _NON_TRANSCRIPT_NAMES = {"summary.md", "journal.md"}
@@ -251,15 +266,26 @@ def cmd_digest(args: argparse.Namespace) -> None:
 
     jobs = max(1, args.jobs)
 
+    backend = digest_backend()
+    model = digest_model()
+
     def _one(t: Path) -> tuple[Path, Path | None, BaseException | None]:
         repo = _repo_of(t)
         try:
             if repo == NOGIT:
                 target_dir = store / "chats" / "nogit"
                 cats = _existing_nogit_categories(store)
-                return t, summarize_file(t, target_repo_dir=target_dir, nogit_categories=cats), None
+                return t, summarize_file(
+                    t,
+                    target_repo_dir=target_dir,
+                    backend=backend,
+                    model=model,
+                    nogit_categories=cats,
+                ), None
             target_dir = store / "chats" / repo
-            return t, summarize_file(t, target_repo_dir=target_dir), None
+            return t, summarize_file(
+                t, target_repo_dir=target_dir, backend=backend, model=model
+            ), None
         except BaseException as e:
             return t, None, e
 

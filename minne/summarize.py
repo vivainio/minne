@@ -1,5 +1,6 @@
 """Generate a short keyword-index summary for an ingested session by shelling
-out to the `claude` CLI with Haiku. Uses the Claude Code subscription, not API."""
+out to the `claude` or `copilot` CLI. Uses the user's existing subscription,
+not the API."""
 
 import re
 import shutil
@@ -7,6 +8,19 @@ import subprocess
 from pathlib import Path
 
 HAIKU_MODEL = "haiku"
+DEFAULT_BACKEND = "claude"
+DEFAULT_COPILOT_MODEL = "gpt-4.1"
+
+
+def _build_cmd(backend: str, model: str, prompt: str) -> list[str]:
+    if backend == "claude":
+        return ["claude", "--tools", "", "--model", model, "-p", prompt]
+    if backend == "copilot":
+        # --allow-all-tools is required for non-interactive mode; the prompt
+        # itself instructs the model to emit only the digest format, and
+        # copilot has no equivalent of claude's `--tools ""` knob.
+        return ["copilot", "--allow-all-tools", "--model", model, "-p", prompt]
+    raise ValueError(f"unknown digest backend: {backend!r}")
 
 PROMPT_HEAD = """\
 You are indexing past Claude Code conversations so they can be found later by
@@ -138,7 +152,8 @@ def _inject_started(summary: str, started: str) -> str:
 def summarize_file(
     transcript: Path,
     target_repo_dir: Path | None = None,
-    model: str = HAIKU_MODEL,
+    model: str | None = None,
+    backend: str | None = None,
     nogit_categories: list[str] | None = None,
 ) -> Path:
     """Summarize a transcript and produce `summary.md`.
@@ -152,23 +167,18 @@ def summarize_file(
     `<stem>.summary.md` next to the transcript.
 
     Returns the final summary path."""
-    if shutil.which("claude") is None:
-        raise RuntimeError("`claude` CLI not found on PATH")
+    backend = backend or DEFAULT_BACKEND
+    if model is None:
+        model = HAIKU_MODEL if backend == "claude" else DEFAULT_COPILOT_MODEL
+    if shutil.which(backend) is None:
+        raise RuntimeError(f"`{backend}` CLI not found on PATH")
     transcript_text = transcript.read_text(encoding="utf-8")
     prompt_head = PROMPT_HEAD
     if nogit_categories is not None:
         cat_block = "\n".join(f"  - {c}" for c in nogit_categories) or "  (none yet — invent one)"
         prompt_head = PROMPT_HEAD + "\n" + NOGIT_PROMPT_EXTRA.format(categories=cat_block)
     out = subprocess.run(
-        [
-            "claude",
-            "--tools",
-            "",
-            "--model",
-            model,
-            "-p",
-            prompt_head + transcript_text + PROMPT_TAIL,
-        ],
+        _build_cmd(backend, model, prompt_head + transcript_text + PROMPT_TAIL),
         check=True,
         capture_output=True,
         text=True,
