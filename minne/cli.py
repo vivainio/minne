@@ -1,9 +1,11 @@
 import argparse
 import os
 import re
-from collections import Counter
+import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from minne.clip import add_clip
 from minne.install import install_skills
 from minne.reader import iter_records, iter_session_files, project_dir_for_cwd, projects_root
 from minne.render import render_session
@@ -23,23 +25,34 @@ def default_store() -> Path:
     return default_root() / "store"
 
 
-def cmd_scan(args: argparse.Namespace) -> None:
-    pdir = project_dir_for_cwd(args.cwd)
-    print(f"project dir: {pdir}")
-    files = list(iter_session_files(pdir))
-    print(f"sessions: {len(files)}")
-    for f in files:
-        counts: Counter[str] = Counter()
-        total = 0
-        for rec in iter_records(f):
-            counts[rec.get("type", "?")] += 1
-            total += 1
-        summary = ", ".join(f"{k}={v}" for k, v in counts.most_common())
-        print(f"  {f.name}  ({total} records)  {summary}")
-
-
 def _is_transcript(p: Path) -> bool:
     return p.suffix == ".md" and not p.name.endswith(".summary.md") and p.name != "summary.md"
+
+
+def _parse_since(s: str) -> datetime:
+    m = re.fullmatch(r"(\d+)d", s)
+    if m:
+        return datetime.now(timezone.utc) - timedelta(days=int(m.group(1)))
+    try:
+        return datetime.fromisoformat(s).replace(tzinfo=timezone.utc)
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(
+            f"--since must be 'Nd' (days) or YYYY-MM-DD, got {s!r}"
+        ) from e
+
+
+def _started_of(transcript: Path) -> datetime | None:
+    try:
+        head = transcript.read_text(encoding="utf-8", errors="replace")[:512]
+    except OSError:
+        return None
+    m = re.search(r"^started:\s*(\S+)", head, re.MULTILINE)
+    if not m:
+        return None
+    try:
+        return datetime.fromisoformat(m.group(1).replace("Z", "+00:00"))
+    except ValueError:
+        return None
 
 
 def _summary_for(transcript: Path) -> Path:
@@ -50,8 +63,10 @@ def _summary_for(transcript: Path) -> Path:
 
 def _repo_of(transcript: Path) -> str:
     """Repo dir name from a transcript path. inbox/<repo>/<id>.md -> repo;
-    store/<repo>/<date>-<slug>/chat.md -> repo."""
-    return transcript.parent.parent.name if transcript.name == "chat.md" else transcript.parent.name
+    store/chats/<repo>/<date>-<slug>/chat.md -> repo."""
+    if transcript.name == "chat.md":
+        return transcript.parent.parent.name
+    return transcript.parent.name
 
 
 def _scan_session_ids(*roots: Path) -> dict[str, Path]:
@@ -106,7 +121,7 @@ def cmd_ingest(args: argparse.Namespace) -> None:
                 out = existing[session_id]
             else:
                 repo = resolve_repo(_first_cwd(records))
-                repo_dir = inbox / repo
+                repo_dir = inbox / "chats" / repo
                 repo_dir.mkdir(parents=True, exist_ok=True)
                 out = repo_dir / f"{session_id}.md"
             out.write_text(md, encoding="utf-8")
@@ -131,6 +146,9 @@ def cmd_summarize(args: argparse.Namespace) -> None:
         chats.sort(key=lambda p: p.stat().st_mtime)
         if not args.all:
             chats = [p for p in chats if not _summary_for(p).exists()]
+        if args.since:
+            cutoff = _parse_since(args.since)
+            chats = [p for p in chats if (s := _started_of(p)) and s >= cutoff]
         targets = chats
         if not targets:
             print("nothing to summarize")
@@ -138,9 +156,23 @@ def cmd_summarize(args: argparse.Namespace) -> None:
 
     for t in targets:
         print(f"summarizing {t} ...")
-        target_repo_dir = store / _repo_of(t)
-        out = summarize_file(t, target_repo_dir=target_repo_dir)
+        target_dir = store / "chats" / _repo_of(t)
+        out = summarize_file(t, target_repo_dir=target_dir)
         print(f"  wrote {out}")
+
+
+def cmd_add(args: argparse.Namespace) -> None:
+    if args.file is None or str(args.file) == "-":
+        text = sys.stdin.read()
+        source = "stdin"
+    else:
+        text = args.file.read_text(encoding="utf-8")
+        source = str(args.file.resolve())
+    if not text.strip():
+        print("nothing to add (empty input)", file=sys.stderr)
+        sys.exit(2)
+    out = add_clip(text, source, args.cwd or Path.cwd(), args.inbox)
+    print(f"added {out}")
 
 
 def cmd_install_skills(args: argparse.Namespace) -> None:
@@ -159,10 +191,6 @@ def main() -> None:
     parser = argparse.ArgumentParser(prog="minne")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
-    p_scan = sub.add_parser("scan", help="Show session files and record-type counts for cwd")
-    p_scan.add_argument("--cwd", type=Path, default=None)
-    p_scan.set_defaults(func=cmd_scan)
-
     p_ing = sub.add_parser("ingest", help="Ingest sessions into inbox/<repo>/")
     p_ing.add_argument("--cwd", type=Path, default=None,
                        help="only ingest sessions from this cwd (default: all projects)")
@@ -174,8 +202,18 @@ def main() -> None:
                        help="transcript file or directory (default: inbox; sweeps inbox+store)")
     p_sum.add_argument("--all", action="store_true",
                        help="re-summarize even if a summary already exists")
+    p_sum.add_argument("--since", default=None,
+                       help="only sessions started since this point: 'Nd' or YYYY-MM-DD")
     _add_root_args(p_sum)
     p_sum.set_defaults(func=cmd_summarize)
+
+    p_add = sub.add_parser("add", help="Add a text clip to inbox/clips/<repo>/<uuid>.json")
+    p_add.add_argument("file", type=Path, nargs="?", default=None,
+                       help="file to add; '-' or omitted reads from stdin")
+    p_add.add_argument("--cwd", type=Path, default=None,
+                       help="treat as if run from this dir (for repo/branch resolution)")
+    _add_root_args(p_add)
+    p_add.set_defaults(func=cmd_add)
 
     p_inst = sub.add_parser("install-skills", help="Install Claude Code skill into ~/.claude/skills/")
     p_inst.add_argument("--dest", type=Path, default=None,

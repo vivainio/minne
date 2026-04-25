@@ -116,8 +116,10 @@ def summarize_file(
     date = started[:10] if started and len(started) >= 10 else None
 
     in_session_dir = transcript.name == "chat.md"
-    fallback_repo_dir = transcript.parent.parent if in_session_dir else transcript.parent
-    repo_dir = target_repo_dir or fallback_repo_dir
+    # transcript at <root>/<date>-<slug>/chat.md → root is parent.parent;
+    # transcript at <root>/<id>.md → root is parent.
+    fallback_root = transcript.parent.parent if in_session_dir else transcript.parent
+    repo_dir = target_repo_dir or fallback_root
 
     if slug and date:
         target_dir = repo_dir / f"{date}-{slug}"
