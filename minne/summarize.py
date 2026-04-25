@@ -1,11 +1,10 @@
 """Generate a short keyword-index summary for an ingested session by shelling
 out to the `claude` CLI with Haiku. Uses the Claude Code subscription, not API."""
 
-from pathlib import Path
 import re
 import shutil
 import subprocess
-
+from pathlib import Path
 
 HAIKU_MODEL = "haiku"
 
@@ -88,8 +87,8 @@ def _split_journal(text: str) -> tuple[str, str | None]:
     m = _JOURNAL_MARKER.search(text)
     if not m:
         return text, None
-    summary = text[:m.start()].rstrip() + "\n"
-    journal = text[m.end():].lstrip()
+    summary = text[: m.start()].rstrip() + "\n"
+    journal = text[m.end() :].lstrip()
     return summary, journal or None
 
 
@@ -104,7 +103,7 @@ def _extract_slug(fm: str) -> str | None:
     m = _SLUG_RE.search(fm)
     if not m:
         return None
-    raw = m.group(1).strip().strip('"\'').lower()
+    raw = m.group(1).strip().strip("\"'").lower()
     cleaned = _SAFE_SLUG.sub("-", raw).strip("-")
     return cleaned or None
 
@@ -113,7 +112,7 @@ def _extract_category(fm: str) -> str | None:
     m = _CATEGORY_RE.search(fm)
     if not m:
         return None
-    raw = m.group(1).strip().strip('"\'').lower()
+    raw = m.group(1).strip().strip("\"'").lower()
     cleaned = _SAFE_SLUG.sub("-", raw).strip("-")
     return cleaned or None
 
@@ -161,8 +160,15 @@ def summarize_file(
         cat_block = "\n".join(f"  - {c}" for c in nogit_categories) or "  (none yet — invent one)"
         prompt_head = PROMPT_HEAD + "\n" + NOGIT_PROMPT_EXTRA.format(categories=cat_block)
     out = subprocess.run(
-        ["claude", "--tools", "", "--model", model, "-p",
-         prompt_head + transcript_text + PROMPT_TAIL],
+        [
+            "claude",
+            "--tools",
+            "",
+            "--model",
+            model,
+            "-p",
+            prompt_head + transcript_text + PROMPT_TAIL,
+        ],
         check=True,
         capture_output=True,
         text=True,

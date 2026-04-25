@@ -2,7 +2,6 @@
 
 from collections.abc import Iterable
 
-
 _EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
 
 

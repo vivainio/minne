@@ -4,16 +4,11 @@ import re
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from minne import copilot
 from minne.clip import add_clip, digest_clip
-from minne.copilot import (
-    iter_session_dirs as copilot_iter_session_dirs,
-    render_session as copilot_render_session,
-    session_cwd as copilot_session_cwd,
-    session_mtime as copilot_session_mtime,
-)
 from minne.install import install_skills
 from minne.reader import iter_records, iter_session_files, project_dir_for_cwd, projects_root
 from minne.render import render_session
@@ -50,9 +45,9 @@ def _is_transcript(p: Path) -> bool:
 def _parse_since(s: str) -> datetime:
     m = re.fullmatch(r"(\d+)d", s)
     if m:
-        return datetime.now(timezone.utc) - timedelta(days=int(m.group(1)))
+        return datetime.now(UTC) - timedelta(days=int(m.group(1)))
     try:
-        return datetime.fromisoformat(s).replace(tzinfo=timezone.utc)
+        return datetime.fromisoformat(s).replace(tzinfo=UTC)
     except ValueError as e:
         raise argparse.ArgumentTypeError(
             f"--since must be 'Nd' (days) or YYYY-MM-DD, got {s!r}"
@@ -157,7 +152,7 @@ def cmd_ingest(args: argparse.Namespace) -> None:
     store: Path = args.store
     inbox.mkdir(parents=True, exist_ok=True)
     existing = _scan_session_ids(inbox, store)
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=args.days)).timestamp() if args.days else None
+    cutoff = (datetime.now(UTC) - timedelta(days=args.days)).timestamp() if args.days else None
     written = 0
     skipped = 0
     for pdir in _project_dirs(args):
@@ -185,18 +180,18 @@ def cmd_ingest(args: argparse.Namespace) -> None:
             written += 1
 
     if args.cwd is None:
-        for sdir in copilot_iter_session_dirs():
-            if cutoff is not None and copilot_session_mtime(sdir) < cutoff:
+        for sdir in copilot.iter_session_dirs():
+            if cutoff is not None and copilot.session_mtime(sdir) < cutoff:
                 continue
             session_id = sdir.name
-            md = copilot_render_session(sdir)
+            md = copilot.render_session(sdir)
             if not md:
                 skipped += 1
                 continue
             if session_id in existing:
                 out = existing[session_id]
             else:
-                repo = resolve_repo(copilot_session_cwd(sdir))
+                repo = resolve_repo(copilot.session_cwd(sdir))
                 repo_dir = inbox / "chats" / repo
                 repo_dir.mkdir(parents=True, exist_ok=True)
                 out = repo_dir / f"{session_id}.md"
@@ -283,6 +278,7 @@ def _digest_clips(inbox: Path, store: Path) -> None:
     total = sum(len(v) for v in by_repo.values())
     print(f"digesting {total} clips ...", flush=True)
     from minne.clip import _index_chats_by_session
+
     for repo, paths in by_repo.items():
         index = _index_chats_by_session(store, repo)
         for p in paths:
@@ -324,14 +320,16 @@ def _tldr_of(chat_dir: Path) -> str | None:
     if end < 0:
         return None
     m = _TLDR_RE.search(head[:end])
-    return m.group(1).strip().strip('"\'') if m else None
+    return m.group(1).strip().strip("\"'") if m else None
 
 
 def _in_git_repo(cwd: Path) -> bool:
     try:
         out = subprocess.run(
             ["git", "-C", str(cwd), "rev-parse", "--is-inside-work-tree"],
-            check=True, capture_output=True, text=True,
+            check=True,
+            capture_output=True,
+            text=True,
         )
         return out.stdout.strip() == "true"
     except (subprocess.CalledProcessError, FileNotFoundError):
@@ -380,11 +378,15 @@ def _list_one_repo(store: Path, repo: str, cutoff: str | None) -> bool:
             any_listed = True
         return any_listed
 
-    chat_dirs = sorted(
-        (d for d in chat_root.glob("*") if d.is_dir()),
-        key=lambda d: d.name,
-        reverse=True,
-    ) if chat_root.is_dir() else []
+    chat_dirs = (
+        sorted(
+            (d for d in chat_root.glob("*") if d.is_dir()),
+            key=lambda d: d.name,
+            reverse=True,
+        )
+        if chat_root.is_dir()
+        else []
+    )
     if cutoff:
         chat_dirs = [d for d in chat_dirs if d.name[:10] >= cutoff]
     orphan_clips = sorted(clip_root.glob("*.md")) if clip_root.is_dir() else []
@@ -396,7 +398,7 @@ def cmd_ls(args: argparse.Namespace) -> None:
     cwd = args.cwd or Path.cwd()
     cutoff: str | None = None
     if args.days:
-        cutoff = (datetime.now(timezone.utc) - timedelta(days=args.days)).date().isoformat()
+        cutoff = (datetime.now(UTC) - timedelta(days=args.days)).date().isoformat()
 
     if args.repo:
         repos = [args.repo]
@@ -406,7 +408,11 @@ def cmd_ls(args: argparse.Namespace) -> None:
         scope = f"repo: {repos[0]} (cwd is in a git work tree)"
     else:
         chats_root = store / "chats"
-        repos = sorted(d.name for d in chats_root.glob("*") if d.is_dir()) if chats_root.is_dir() else []
+        repos = (
+            sorted(d.name for d in chats_root.glob("*") if d.is_dir())
+            if chats_root.is_dir()
+            else []
+        )
         scope = f"all repos ({len(repos)})"
 
     print(scope)
@@ -431,7 +437,7 @@ def cmd_journal(args: argparse.Namespace) -> None:
 
     cutoff: str | None = None
     if args.days:
-        cutoff = (datetime.now(timezone.utc) - timedelta(days=args.days)).date().isoformat()
+        cutoff = (datetime.now(UTC) - timedelta(days=args.days)).date().isoformat()
 
     repos = [args.repo] if args.repo else sorted(d.name for d in chats_root.glob("*") if d.is_dir())
 
@@ -445,8 +451,10 @@ def cmd_journal(args: argparse.Namespace) -> None:
         if repo == "nogit":
             chat_dirs = [
                 (f"nogit/{cat.name}", d)
-                for cat in repo_root.glob("*") if cat.is_dir()
-                for d in cat.glob("*") if d.is_dir()
+                for cat in repo_root.glob("*")
+                if cat.is_dir()
+                for d in cat.glob("*")
+                if d.is_dir()
             ]
         else:
             chat_dirs = [(repo, d) for d in repo_root.glob("*") if d.is_dir()]
@@ -492,10 +500,18 @@ def cmd_install_skills(args: argparse.Namespace) -> None:
 
 
 def _add_root_args(p: argparse.ArgumentParser) -> None:
-    p.add_argument("--inbox", type=Path, default=default_inbox(),
-                   help="landing zone for fresh ingests (default: $MINNE_HOME/inbox)")
-    p.add_argument("--store", type=Path, default=default_store(),
-                   help="store for summarized sessions (default: $MINNE_HOME/store)")
+    p.add_argument(
+        "--inbox",
+        type=Path,
+        default=default_inbox(),
+        help="landing zone for fresh ingests (default: $MINNE_HOME/inbox)",
+    )
+    p.add_argument(
+        "--store",
+        type=Path,
+        default=default_store(),
+        help="store for summarized sessions (default: $MINNE_HOME/store)",
+    )
 
 
 def main() -> None:
@@ -503,54 +519,84 @@ def main() -> None:
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     p_ing = sub.add_parser("ingest", help="Ingest sessions into inbox/<repo>/")
-    p_ing.add_argument("--cwd", type=Path, default=None,
-                       help="only ingest sessions from this cwd (default: all projects)")
-    p_ing.add_argument("--days", type=int, default=None,
-                       help="only ingest sessions modified in the last N days")
+    p_ing.add_argument(
+        "--cwd",
+        type=Path,
+        default=None,
+        help="only ingest sessions from this cwd (default: all projects)",
+    )
+    p_ing.add_argument(
+        "--days", type=int, default=None, help="only ingest sessions modified in the last N days"
+    )
     _add_root_args(p_ing)
     p_ing.set_defaults(func=cmd_ingest)
 
-    p_dig = sub.add_parser("digest", help="Process inbox items into store/ (chats: summarize via Haiku and move)")
-    p_dig.add_argument("path", type=Path, nargs="?", default=default_inbox(),
-                       help="file or directory to digest (default: inbox; sweeps inbox+store)")
-    p_dig.add_argument("--all", action="store_true",
-                       help="re-digest even if a digested artifact already exists")
-    p_dig.add_argument("--since", default=None,
-                       help="only items started since this point: 'Nd' or YYYY-MM-DD")
-    p_dig.add_argument("--jobs", "-j", type=int, default=4,
-                       help="number of parallel digest workers (default: 4)")
+    p_dig = sub.add_parser(
+        "digest", help="Process inbox items into store/ (chats: summarize via Haiku and move)"
+    )
+    p_dig.add_argument(
+        "path",
+        type=Path,
+        nargs="?",
+        default=default_inbox(),
+        help="file or directory to digest (default: inbox; sweeps inbox+store)",
+    )
+    p_dig.add_argument(
+        "--all", action="store_true", help="re-digest even if a digested artifact already exists"
+    )
+    p_dig.add_argument(
+        "--since", default=None, help="only items started since this point: 'Nd' or YYYY-MM-DD"
+    )
+    p_dig.add_argument(
+        "--jobs", "-j", type=int, default=4, help="number of parallel digest workers (default: 4)"
+    )
     _add_root_args(p_dig)
     p_dig.set_defaults(func=cmd_digest)
 
     p_add = sub.add_parser("add", help="Add a text clip to inbox/clips/<repo>/<uuid>.json")
-    p_add.add_argument("file", type=Path, nargs="?", default=None,
-                       help="file to add; '-' or omitted reads from stdin")
-    p_add.add_argument("--cwd", type=Path, default=None,
-                       help="treat as if run from this dir (for repo/branch resolution)")
+    p_add.add_argument(
+        "file",
+        type=Path,
+        nargs="?",
+        default=None,
+        help="file to add; '-' or omitted reads from stdin",
+    )
+    p_add.add_argument(
+        "--cwd",
+        type=Path,
+        default=None,
+        help="treat as if run from this dir (for repo/branch resolution)",
+    )
     _add_root_args(p_add)
     p_add.set_defaults(func=cmd_add)
 
     p_ls = sub.add_parser("ls", help="List store objects (chats and clips) for a repo")
-    p_ls.add_argument("--cwd", type=Path, default=None,
-                      help="treat as if run from this dir (for repo resolution)")
-    p_ls.add_argument("--repo", default=None,
-                      help="repo name to list (default: resolve from cwd; all repos when cwd is not a git work tree)")
-    p_ls.add_argument("--days", type=int, default=None,
-                      help="only show chats from the last N days")
+    p_ls.add_argument(
+        "--cwd", type=Path, default=None, help="treat as if run from this dir (for repo resolution)"
+    )
+    p_ls.add_argument(
+        "--repo",
+        default=None,
+        help="repo name to list (default: resolve from cwd; all repos when cwd is not a git work tree)",
+    )
+    p_ls.add_argument("--days", type=int, default=None, help="only show chats from the last N days")
     _add_root_args(p_ls)
     p_ls.set_defaults(func=cmd_ls)
 
     p_jrnl = sub.add_parser("journal", help="Print collected journal.md entries grouped by date")
-    p_jrnl.add_argument("--repo", default=None,
-                        help="limit to one repo (default: all repos)")
-    p_jrnl.add_argument("--days", type=int, default=None,
-                        help="only show entries from the last N days")
+    p_jrnl.add_argument("--repo", default=None, help="limit to one repo (default: all repos)")
+    p_jrnl.add_argument(
+        "--days", type=int, default=None, help="only show entries from the last N days"
+    )
     _add_root_args(p_jrnl)
     p_jrnl.set_defaults(func=cmd_journal)
 
-    p_inst = sub.add_parser("install-skills", help="Install Claude Code skill into ~/.claude/skills/")
-    p_inst.add_argument("--dest", type=Path, default=None,
-                        help="override skills root (default: ~/.claude/skills)")
+    p_inst = sub.add_parser(
+        "install-skills", help="Install Claude Code skill into ~/.claude/skills/"
+    )
+    p_inst.add_argument(
+        "--dest", type=Path, default=None, help="override skills root (default: ~/.claude/skills)"
+    )
     p_inst.set_defaults(func=cmd_install_skills)
 
     args = parser.parse_args()

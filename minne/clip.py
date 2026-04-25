@@ -1,14 +1,14 @@
 """Capture a text clip into <inbox>/clips/<repo>/<uuid>.json with metadata,
 and digest it into markdown under the store."""
 
-from datetime import datetime, timezone
-from pathlib import Path
 import json
 import os
 import re
 import socket
 import subprocess
 import uuid
+from datetime import UTC, datetime
+from pathlib import Path
 
 from minne.reader import iter_session_files, project_dir_for_cwd
 from minne.repo import resolve_repo
@@ -29,7 +29,9 @@ def _git_branch(cwd: Path) -> str | None:
     try:
         out = subprocess.run(
             ["git", "-C", str(cwd), "rev-parse", "--abbrev-ref", "HEAD"],
-            check=True, capture_output=True, text=True,
+            check=True,
+            capture_output=True,
+            text=True,
         )
         b = out.stdout.strip()
         return b if b and b != "HEAD" else None
@@ -69,7 +71,7 @@ def add_clip(text: str, source: str, cwd: Path, inbox: Path) -> Path:
         "branch": _git_branch(cwd),
         "session_id": _current_session_id(cwd),
         "host": socket.gethostname(),
-        "captured": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "captured": datetime.now(UTC).isoformat(timespec="seconds"),
     }
     hint = _hint_slug(source, text)
     out = out_dir / f"{hint}-{clip_id[:8]}.json"

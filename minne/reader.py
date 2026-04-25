@@ -7,10 +7,10 @@ Claude Code stores one JSONL file per session under
 The schema is undocumented and changes; everything here parses defensively.
 """
 
-from collections.abc import Iterator
-from pathlib import Path
 import json
 import os
+from collections.abc import Iterator
+from pathlib import Path
 
 
 def encode_cwd(cwd: Path) -> str:

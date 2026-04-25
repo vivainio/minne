@@ -1,8 +1,7 @@
 """Resolve a Claude Code project's cwd to a repo name for inbox grouping."""
 
-from pathlib import Path
 import subprocess
-
+from pathlib import Path
 
 NOGIT = "_nogit"
 

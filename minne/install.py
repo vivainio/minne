@@ -1,9 +1,8 @@
 """Install minne's bundled Claude Code skills into ~/.claude/skills/."""
 
+import shutil
 from importlib import resources
 from pathlib import Path
-import shutil
-
 
 SKILL_NAMES = ["minne"]
 

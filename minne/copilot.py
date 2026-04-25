@@ -7,10 +7,10 @@ with an ``events.jsonl`` log and a small ``workspace.yaml`` carrying
 Claude Code transcripts use so the rest of the digest pipeline runs
 unchanged."""
 
-from collections.abc import Iterator
-from pathlib import Path
 import json
 import os
+from collections.abc import Iterator
+from pathlib import Path
 
 
 def copilot_root() -> Path:
@@ -52,7 +52,7 @@ def _parse_workspace(session_dir: Path) -> dict[str, str]:
         if ":" not in line or line.startswith(" ") or line.startswith("\t"):
             continue
         key, _, value = line.partition(":")
-        out[key.strip()] = value.strip().strip('"\'')
+        out[key.strip()] = value.strip().strip("\"'")
     return out
 
 
