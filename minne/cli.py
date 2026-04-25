@@ -107,10 +107,13 @@ def cmd_ingest(args: argparse.Namespace) -> None:
     store: Path = args.store
     inbox.mkdir(parents=True, exist_ok=True)
     existing = _scan_session_ids(inbox, store)
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=args.days)).timestamp() if args.days else None
     written = 0
     skipped = 0
     for pdir in _project_dirs(args):
         for f in iter_session_files(pdir):
+            if cutoff is not None and f.stat().st_mtime < cutoff:
+                continue
             session_id = f.stem
             records = list(iter_records(f))
             md = render_session(records)
@@ -130,7 +133,7 @@ def cmd_ingest(args: argparse.Namespace) -> None:
     print(f"done: {written} written, {skipped} empty")
 
 
-def cmd_summarize(args: argparse.Namespace) -> None:
+def cmd_digest(args: argparse.Namespace) -> None:
     inbox: Path = args.inbox
     store: Path = args.store
     target: Path = args.path
@@ -151,11 +154,11 @@ def cmd_summarize(args: argparse.Namespace) -> None:
             chats = [p for p in chats if (s := _started_of(p)) and s >= cutoff]
         targets = chats
         if not targets:
-            print("nothing to summarize")
+            print("nothing to digest")
             return
 
     for t in targets:
-        print(f"summarizing {t} ...")
+        print(f"digesting {t} ...")
         target_dir = store / "chats" / _repo_of(t)
         out = summarize_file(t, target_repo_dir=target_dir)
         print(f"  wrote {out}")
@@ -194,18 +197,20 @@ def main() -> None:
     p_ing = sub.add_parser("ingest", help="Ingest sessions into inbox/<repo>/")
     p_ing.add_argument("--cwd", type=Path, default=None,
                        help="only ingest sessions from this cwd (default: all projects)")
+    p_ing.add_argument("--days", type=int, default=None,
+                       help="only ingest sessions modified in the last N days")
     _add_root_args(p_ing)
     p_ing.set_defaults(func=cmd_ingest)
 
-    p_sum = sub.add_parser("summarize", help="Summarize transcripts via `claude -p` Haiku; move to store/")
-    p_sum.add_argument("path", type=Path, nargs="?", default=default_inbox(),
-                       help="transcript file or directory (default: inbox; sweeps inbox+store)")
-    p_sum.add_argument("--all", action="store_true",
-                       help="re-summarize even if a summary already exists")
-    p_sum.add_argument("--since", default=None,
-                       help="only sessions started since this point: 'Nd' or YYYY-MM-DD")
-    _add_root_args(p_sum)
-    p_sum.set_defaults(func=cmd_summarize)
+    p_dig = sub.add_parser("digest", help="Process inbox items into store/ (chats: summarize via Haiku and move)")
+    p_dig.add_argument("path", type=Path, nargs="?", default=default_inbox(),
+                       help="file or directory to digest (default: inbox; sweeps inbox+store)")
+    p_dig.add_argument("--all", action="store_true",
+                       help="re-digest even if a digested artifact already exists")
+    p_dig.add_argument("--since", default=None,
+                       help="only items started since this point: 'Nd' or YYYY-MM-DD")
+    _add_root_args(p_dig)
+    p_dig.set_defaults(func=cmd_digest)
 
     p_add = sub.add_parser("add", help="Add a text clip to inbox/clips/<repo>/<uuid>.json")
     p_add.add_argument("file", type=Path, nargs="?", default=None,

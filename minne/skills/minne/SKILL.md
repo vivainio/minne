@@ -1,36 +1,45 @@
 ---
 name: minne
-description: Capture the current Claude Code conversation into ~/minne/inbox/<repo>/ as markdown, then produce a short Haiku-generated keyword index. Use when the user says "capture this", "save the conversation", "remember what we did", "minne it", or invokes /minne. Also use proactively at the natural end of a non-trivial work session before context is lost.
+description: Capture the current Claude Code conversation (or a clip) into ~/minne/inbox/, then digest into ~/minne/store/ with a Haiku-generated keyword index. Use when the user says "capture this", "save the conversation", "remember what we did", "minne it", or invokes /minne. Also use proactively at the natural end of a non-trivial work session before context is lost.
 ---
 
-# minne — capture conversation + summarize
+# minne — capture + digest
 
-Two commands: ingest live JSONL into markdown, then have Haiku build a keyword index for future search.
+Two commands: ingest the live session (or `add` a clip), then `digest` to summarize and promote into the store.
 
 ## When to use
 
 - User asks to capture / save / remember the conversation.
 - User invokes `/minne`.
 - Proactively at the end of a substantial work session (multiple commits, a feature shipped, a bug rooted out) — offer it in one line, don't auto-run.
+- `minne add -` to capture an arbitrary text snippet (paste, file, stdout) as a clip.
 
 Skip for trivial Q&A turns.
 
 ## Run
 
 ```bash
-minne ingest && minne summarize
+minne ingest && minne digest
 ```
 
-`minne ingest` walks every Claude Code project (default) and writes a flat `~/minne/inbox/<repo>/<session-id>.md` per session. To capture only the current session's project, pass `--cwd "$PWD"`.
+`minne ingest` walks every Claude Code project and writes a flat `~/minne/inbox/chats/<repo>/<session-id>.md` per session. Pass `--cwd "$PWD"` to limit to the current project.
 
-`minne summarize` shells out to `claude -p --tools "" --model haiku` for every transcript without a summary. Uses the Claude Code subscription (no API spend). On success it moves the session out of `inbox/` and into `~/minne/store/<repo>/<date>-<slug>/` containing `chat.md` and `summary.md`.
+`minne digest` shells out to `claude -p --tools "" --model haiku` for every undigested transcript. Uses the Claude Code subscription (no API spend). It moves the session out of `inbox/chats/` into `~/minne/store/chats/<repo>/<date>-<slug>/` containing `chat.md` and `summary.md`.
 
-Report the new directory back to the user; don't paste full summaries unless asked.
+For ad-hoc material:
+
+```bash
+minne add path/to/file        # capture a file as a clip
+some-cmd | minne add -        # capture stdout
+```
+
+Report the new directory paths back to the user; don't paste full summaries unless asked.
 
 ## Output
 
-- Inbox (landing): `~/minne/inbox/<repo>/<session-id>.md`
-- Store (summarized): `~/minne/store/<repo>/<date>-<slug>/{chat.md, summary.md}`
+- Chats inbox: `~/minne/inbox/chats/<repo>/<session-id>.md`
+- Clips inbox: `~/minne/inbox/clips/<repo>/<hint>-<short-uuid>.json`
+- Digested chats: `~/minne/store/chats/<repo>/<date>-<slug>/{chat.md, summary.md}`
 - Override roots with `--inbox PATH` / `--store PATH` or `MINNE_HOME`
 - Transcript front matter: `session_id`, `started`, `ended`, `cwd`
 - Summary front matter: `slug`, `started`

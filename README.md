@@ -2,7 +2,7 @@
 
 Agent memory system for Claude Code.
 
-`minne` reads Claude Code conversation history from `~/.claude/projects/<encoded-cwd>/*.jsonl` for the working directory you're in, and writes per-session markdown into a local `inbox/`. A second pass shells out to `claude -p` with Haiku to produce a short, keyword-dense summary of each transcript that's good for `grep`-ing months later.
+`minne` captures Claude Code conversation history (and arbitrary clips) into a per-repo `inbox/`, then runs a second `digest` pass that shells out to Haiku to produce keyword-dense summaries and promote items into a searchable `store/`.
 
 ## Install
 
@@ -12,22 +12,22 @@ uv tool install minne
 pipx install minne
 ```
 
-Optional dependency: the `claude` CLI on PATH (only used by `minne summarize`). Summarization runs through the Claude Code subscription, not the API.
+Optional dependency: the `claude` CLI on PATH (only used by `minne digest`). Digestion runs through the Claude Code subscription, not the API.
 
 ## Use
 
 ```bash
-minne ingest          # ingest every Claude Code session into ~/minne/inbox/<repo>/
-minne summarize       # produce sibling .summary.md for every transcript missing one
-minne scan            # record-type counts for the cwd's project dir
+minne ingest          # ingest every Claude Code session into ~/minne/inbox/chats/<repo>/
+minne add FILE | -    # add a clip from a file or stdin
+minne digest          # process inbox items into ~/minne/store/<type>/<repo>/
 minne install-skills  # install the bundled "minne" Claude Code skill into ~/.claude/skills/
 ```
 
-`minne` is a global tool: by default it walks every project under `~/.claude/projects/` and groups transcripts into `~/minne/inbox/<repo>/` (resolving the project's cwd via `git rev-parse --show-toplevel`, falling back to the dir basename, or `_unknown/` if the path is gone). Override the inbox root with `--inbox PATH` or `MINNE_HOME`.
+`minne` is a global tool: by default it walks every project under `~/.claude/projects/` and groups transcripts by repo, resolved via `git rev-parse --show-toplevel` of the session's cwd (falling back to the cwd basename, or `_unknown/` if the path is gone). Override roots with `--inbox PATH` / `--store PATH` or `MINNE_HOME` (defaults: `~/minne/inbox`, `~/minne/store`).
 
-`--cwd PATH` restricts ingest to a single project dir.
+`--cwd PATH` restricts `ingest` to a single project. `digest --since 1d` limits to recent items.
 
-After `install-skills`, the agent itself can invoke `minne ingest && minne summarize` at the end of a non-trivial work session.
+After `install-skills`, the agent itself can invoke `minne ingest && minne digest` at the end of a non-trivial work session.
 
 ## What gets kept
 
@@ -46,29 +46,24 @@ If `cwd` changes mid-session (you `cd`'d), `cwds:` lists them all and an inline 
 
 ## What summaries look like
 
-Summaries are written by Haiku and meant to be searched, not read. They describe what the conversation is *about* — topics, file paths, libraries, commands, jargon — not what was decided or built. The idea is that grep through `inbox/*.summary.md` surfaces the right transcript, then you read the full thing.
+Summaries are written by Haiku and meant to be searched, not read. They describe what the conversation is *about* — topics, file paths, libraries, commands, jargon — not what was decided or built. The idea is that grep through `~/minne/store/chats/**/summary.md` surfaces the right transcript, then you read the full thing.
 
 ## Layout
-
-`~/minne/` has two roots: `inbox/` is the landing zone for fresh ingests, `store/` holds summarized sessions.
 
 ```
 ~/minne/
 ├── inbox/
-│   └── <repo>/
-│       └── <session-id>.md          # raw, awaiting summarize
+│   ├── chats/<repo>/<session-id>.md             # raw chat, awaiting digest
+│   └── clips/<repo>/<hint>-<short-uuid>.json    # `minne add` payload + metadata
 └── store/
-    └── <repo>/
-        └── <date>-<slug>/
-            ├── chat.md              # final transcript
-            └── summary.md           # keyword index
+    └── chats/<repo>/<date>-<slug>/
+        ├── chat.md              # final transcript
+        └── summary.md           # keyword index
 ```
 
-`minne ingest` writes new sessions into `inbox/` flat. `minne summarize` runs Haiku, wraps each session into `store/<repo>/<date>-<slug>/`, and moves the chat there. The slug comes from Haiku via `slug:` in summary front matter; the date comes from the transcript's `started:`. Re-running `minne ingest` looks up existing transcripts by `session_id:` in their front matter (across both inbox and store) and updates them in place.
-
-Override roots with `--inbox PATH` / `--store PATH` or set `MINNE_HOME` (defaults: `~/minne/inbox`, `~/minne/store`).
+`minne ingest` writes new sessions into `inbox/chats/`. `minne digest` runs Haiku for each undigested transcript, wraps it into `store/chats/<repo>/<date>-<slug>/`, and moves the chat there. The slug comes from Haiku via `slug:` in summary front matter; the date comes from the transcript's `started:`. Re-running `minne ingest` looks up existing transcripts by `session_id:` in their front matter (across both inbox and store) and updates them in place.
 
 ## Requirements
 
 - Python ≥ 3.11
-- Claude Code (only for `minne summarize`)
+- Claude Code (only for `minne digest`)
