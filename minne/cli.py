@@ -70,6 +70,30 @@ def _repo_of(transcript: Path) -> str:
     return transcript.parent.name
 
 
+_SUMMARIZER_MARKER = "You are indexing past Claude Code conversations"
+
+
+def _is_summarizer_session(records: list[dict]) -> bool:
+    """Detect transcripts produced by `minne digest` itself (the Haiku
+    summarizer shell-out leaves its own session in ~/.claude/projects/).
+    Match on the fixed PROMPT_HEAD signature in the first user message."""
+    for r in records:
+        if r.get("type") != "user":
+            continue
+        msg = r.get("message") or {}
+        content = msg.get("content", r.get("content"))
+        if isinstance(content, str):
+            return _SUMMARIZER_MARKER in content
+        if isinstance(content, list):
+            for c in content:
+                if isinstance(c, dict) and c.get("type") == "text":
+                    if _SUMMARIZER_MARKER in (c.get("text") or ""):
+                        return True
+            return False
+        return False
+    return False
+
+
 def _scan_session_ids(*roots: Path) -> dict[str, Path]:
     out: dict[str, Path] = {}
     for root in roots:
@@ -117,6 +141,9 @@ def cmd_ingest(args: argparse.Namespace) -> None:
                 continue
             session_id = f.stem
             records = list(iter_records(f))
+            if _is_summarizer_session(records):
+                skipped += 1
+                continue
             md = render_session(records)
             if not md:
                 skipped += 1
