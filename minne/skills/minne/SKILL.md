@@ -21,14 +21,16 @@ Skip for trivial Q&A turns.
 minne ingest && minne summarize
 ```
 
-`minne ingest` walks every Claude Code project (default) and writes one markdown file per session into `~/minne/inbox/<repo>/<session-id>.md`. To capture only the current session's project, pass `--cwd "$PWD"`.
+`minne ingest` walks every Claude Code project (default) and writes a flat `~/minne/inbox/<repo>/<session-id>.md` per session. To capture only the current session's project, pass `--cwd "$PWD"`.
 
-`minne summarize` shells out to `claude -p --tools "" --model haiku` for every transcript that doesn't yet have a sibling `.summary.md`. Uses the Claude Code subscription (no API spend). After summarization, both transcript and summary are renamed to `<YYYY-MM-DD>-<slug>.{md,summary.md}`.
+`minne summarize` shells out to `claude -p --tools "" --model haiku` for every transcript without a summary. Uses the Claude Code subscription (no API spend). On success it wraps the session into `~/minne/inbox/<repo>/<date>-<slug>/` containing `chat.md` and `summary.md`.
 
-Report the new file paths back to the user; don't paste full summaries unless asked.
+Report the new directory back to the user; don't paste full summaries unless asked.
 
 ## Output
 
-- Inbox root: `~/minne/inbox/<repo>/` (override with `--inbox` or `MINNE_HOME`)
+- Pre-summarize: `~/minne/inbox/<repo>/<session-id>.md` (flat)
+- Post-summarize: `~/minne/inbox/<repo>/<date>-<slug>/{chat.md, summary.md}`
+- Override root with `--inbox PATH` or `MINNE_HOME`
 - Transcript front matter: `session_id`, `started`, `ended`, `cwd`
 - Summary front matter: `slug`, `started`

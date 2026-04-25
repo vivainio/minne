@@ -30,11 +30,22 @@ def cmd_scan(args: argparse.Namespace) -> None:
         print(f"  {f.name}  ({total} records)  {summary}")
 
 
+def _is_transcript(p: Path) -> bool:
+    return p.suffix == ".md" and not p.name.endswith(".summary.md") and p.name != "summary.md"
+
+
+def _summary_for(transcript: Path) -> Path:
+    if transcript.name == "chat.md":
+        return transcript.with_name("summary.md")
+    return transcript.with_name(f"{transcript.stem}.summary.md")
+
+
 def _existing_by_session_id(inbox: Path) -> dict[str, Path]:
-    """Map session_id -> existing transcript path, walking the inbox tree."""
+    """Map session_id -> existing transcript path. Walks both flat
+    `<repo>/<session-id>.md` and wrapped `<repo>/<date>-<slug>/chat.md`."""
     out: dict[str, Path] = {}
     for p in inbox.rglob("*.md"):
-        if p.name.endswith(".summary.md"):
+        if not _is_transcript(p):
             continue
         try:
             head = p.read_text(encoding="utf-8", errors="replace")[:512]
@@ -93,10 +104,11 @@ def cmd_summarize(args: argparse.Namespace) -> None:
     if target.is_file():
         targets = [target]
     else:
-        mds = sorted(target.rglob("*.md"), key=lambda p: p.stat().st_mtime)
-        targets = [p for p in mds if not p.name.endswith(".summary.md")]
+        chats = [p for p in target.rglob("*.md") if _is_transcript(p)]
+        chats.sort(key=lambda p: p.stat().st_mtime)
         if not args.all:
-            targets = [p for p in targets if not p.with_suffix(".summary.md").exists()]
+            chats = [p for p in chats if not _summary_for(p).exists()]
+        targets = chats
         if not targets:
             print(f"nothing to summarize in {target}")
             return

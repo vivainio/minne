@@ -50,17 +50,28 @@ Summaries are written by Haiku and meant to be searched, not read. They describe
 
 ## Layout
 
+After ingest only — flat per-session file under the resolved repo:
+
 ```
 ~/minne/inbox/
 ├── minne/
-│   ├── 2026-04-25-minne-conversation-indexing.md
-│   └── 2026-04-25-minne-conversation-indexing.summary.md
+│   └── 7890dec8-….md
 ├── nspect/
 │   └── ...
-└── _unknown/   # sessions whose original cwd no longer exists
+└── _unknown/    # sessions whose original cwd no longer exists
 ```
 
-After summarization, transcripts are renamed to `<YYYY-MM-DD>-<slug>.{md,summary.md}` (slug proposed by Haiku). Re-running `minne ingest` finds the renamed files via `session_id:` in their YAML front matter and updates them in place — no duplicates.
+After summarize — wrapped into `<date>-<slug>/` with `chat.md` and `summary.md`:
+
+```
+~/minne/inbox/
+└── minne/
+    └── 2026-04-25-minne-agent-memory-system/
+        ├── chat.md
+        └── summary.md
+```
+
+The slug is proposed by Haiku in the summary's YAML front matter; the date is taken from the transcript's `started:`. Re-running `minne ingest` finds existing transcripts via `session_id:` in their YAML front matter and updates them in place — no duplicates.
 
 ## Requirements
 
