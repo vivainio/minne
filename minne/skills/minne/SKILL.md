@@ -1,45 +1,59 @@
 ---
 name: minne
-description: Capture the current Claude Code conversation (or a clip) into ~/minne/inbox/, then digest into ~/minne/store/ with a Haiku-generated keyword index. Use when the user says "capture this", "save the conversation", "remember what we did", "minne it", or invokes /minne. Also use proactively at the natural end of a non-trivial work session before context is lost.
+description: Add notes/clips to the user's personal memory store at ~/minne/ and search it. Use when the user says "remember this", "save to minne", "minne it", "what did we figure out about X", "search minne for Y", or invokes /minne. Also use proactively at the natural end of a non-trivial work session to offer saving a memory before context is lost.
 ---
 
-# minne — capture + digest
+# minne — add memories + search them
 
-Two commands: ingest the live session (or `add` a clip), then `digest` to summarize and promote into the store.
+`minne` is the user's long-term, cross-session memory store at `~/minne/`. This skill covers two things only: **adding** a memory and **searching** existing ones. (Ingest/digest plumbing is internal — don't run it as part of this skill.)
 
-## When to use
+## Add a memory
 
-- User asks to capture / save / remember the conversation.
-- User invokes `/minne`.
-- Proactively at the end of a substantial work session (multiple commits, a feature shipped, a bug rooted out) — offer it in one line, don't auto-run.
-- `minne add -` to capture an arbitrary text snippet (paste, file, stdout) as a clip.
-
-Skip for trivial Q&A turns.
-
-## Run
+The right input is a focused, self-contained note: the conclusion, the gotcha, the decision, the snippet — not the whole conversation. Write it as if the user will read it cold in six months.
 
 ```bash
-minne ingest && minne digest
+echo "TEXT" | minne add -          # capture text from stdin
+minne add path/to/file             # capture an existing file
 ```
 
-`minne ingest` walks every Claude Code project and writes a flat `~/minne/inbox/chats/<repo>/<session-id>.md` per session. Pass `--cwd "$PWD"` to limit to the current project.
+Use `--cwd "$PWD"` if you're not already in the repo the memory belongs to (it's used to bucket the clip under the right project).
 
-`minne digest` shells out to `claude -p --tools "" --model haiku` for every undigested transcript. Uses the Claude Code subscription (no API spend). It moves the session out of `inbox/chats/` into `~/minne/store/chats/<repo>/<date>-<slug>/` containing `chat.md` and `summary.md`.
+When to add:
 
-For ad-hoc material:
+- User says "remember this", "save this to minne", "minne it", "capture this".
+- Proactively after a non-trivial finding (root cause, gnarly fix, surprising config, hard-won command) — offer it in one line, don't auto-run.
+
+What to write:
+
+- One self-contained note per `add`. Title-style first line, then the substance.
+- Include the *why* and any concrete commands / paths / IDs that future-you would need.
+- Skip ephemeral state ("currently running", "today I…") — memories outlive the session.
+
+Skip for trivial Q&A or anything already obvious from the code or git history.
+
+## Search memories
+
+The store is plain markdown under `~/minne/store/` (chats live in `store/chats/<repo>/<date>-<slug>/{chat.md,summary.md}`; clips live alongside). Search it with normal tools:
 
 ```bash
-minne add path/to/file        # capture a file as a clip
-some-cmd | minne add -        # capture stdout
+rg -i "KEYWORDS" ~/minne/store/                      # full-text
+rg -il "KEYWORDS" ~/minne/store/                     # filenames only
+rg -i "KEYWORDS" ~/minne/store/chats/<repo>/         # scope to one project
+fd . ~/minne/store/ -e md | head                     # browse
 ```
 
-Report the new directory paths back to the user; don't paste full summaries unless asked.
+Workflow:
 
-## Output
+1. Pick 2–3 distinct keywords from the user's question (names, errors, commands — not generic words).
+2. `rg -il` first to find candidate files, then `Read` the promising ones.
+3. If nothing hits, broaden terms or try `~/minne/inbox/` (undigested material).
+4. Cite the file path back to the user when you use a memory, so they can verify.
 
-- Chats inbox: `~/minne/inbox/chats/<repo>/<session-id>.md`
-- Clips inbox: `~/minne/inbox/clips/<repo>/<hint>-<short-uuid>.json`
-- Digested chats: `~/minne/store/chats/<repo>/<date>-<slug>/{chat.md, summary.md}`
-- Override roots with `--inbox PATH` / `--store PATH` or `MINNE_HOME`
-- Transcript front matter: `session_id`, `started`, `ended`, `cwd`
-- Summary front matter: `slug`, `started`
+Treat memories as point-in-time notes: a fact recorded six months ago may be stale. If a memory conflicts with what you observe in the live repo, trust the live repo and tell the user the memory looks out of date.
+
+## Output paths (for reference)
+
+- `~/minne/inbox/clips/<repo>/<hint>-<uuid>.json` — fresh clips
+- `~/minne/inbox/chats/<repo>/<session-id>.md` — fresh chat captures
+- `~/minne/store/chats/<repo>/<date>-<slug>/{chat.md, summary.md}` — digested
+- Override with `--inbox` / `--store` or `MINNE_HOME`

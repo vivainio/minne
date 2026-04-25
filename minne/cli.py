@@ -2,6 +2,7 @@ import argparse
 import os
 import re
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -157,11 +158,34 @@ def cmd_digest(args: argparse.Namespace) -> None:
             print("nothing to digest")
             return
 
-    for t in targets:
-        print(f"digesting {t} ...")
+    jobs = max(1, args.jobs)
+
+    def _one(t: Path) -> tuple[Path, Path | None, BaseException | None]:
         target_dir = store / "chats" / _repo_of(t)
-        out = summarize_file(t, target_repo_dir=target_dir)
-        print(f"  wrote {out}")
+        try:
+            return t, summarize_file(t, target_repo_dir=target_dir), None
+        except BaseException as e:
+            return t, None, e
+
+    if jobs == 1:
+        for t in targets:
+            print(f"digesting {t} ...", flush=True)
+            _, out, err = _one(t)
+            if err is not None:
+                print(f"  failed: {err}", file=sys.stderr, flush=True)
+            else:
+                print(f"  wrote {out}", flush=True)
+        return
+
+    print(f"digesting {len(targets)} transcripts with {jobs} workers ...", flush=True)
+    with ThreadPoolExecutor(max_workers=jobs) as ex:
+        futures = [ex.submit(_one, t) for t in targets]
+        for fut in as_completed(futures):
+            t, out, err = fut.result()
+            if err is not None:
+                print(f"  failed {t}: {err}", file=sys.stderr, flush=True)
+            else:
+                print(f"  wrote {out}", flush=True)
 
 
 def cmd_add(args: argparse.Namespace) -> None:
@@ -209,6 +233,8 @@ def main() -> None:
                        help="re-digest even if a digested artifact already exists")
     p_dig.add_argument("--since", default=None,
                        help="only items started since this point: 'Nd' or YYYY-MM-DD")
+    p_dig.add_argument("--jobs", "-j", type=int, default=4,
+                       help="number of parallel digest workers (default: 4)")
     _add_root_args(p_dig)
     p_dig.set_defaults(func=cmd_digest)
 
