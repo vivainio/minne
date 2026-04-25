@@ -346,6 +346,63 @@ def cmd_ls(args: argparse.Namespace) -> None:
         print("\n(nothing to show)")
 
 
+def cmd_journal(args: argparse.Namespace) -> None:
+    store: Path = args.store
+    chats_root = store / "chats"
+    if not chats_root.is_dir():
+        print("(no journal entries yet)")
+        return
+
+    cutoff: str | None = None
+    if args.days:
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=args.days)).date().isoformat()
+
+    repos = [args.repo] if args.repo else sorted(d.name for d in chats_root.glob("*") if d.is_dir())
+
+    # entries: list of (date, repo, slug, journal_text)
+    entries: list[tuple[str, str, str, str]] = []
+    for repo in repos:
+        repo_root = chats_root / repo
+        if not repo_root.is_dir():
+            continue
+        for chat_dir in repo_root.glob("*"):
+            if not chat_dir.is_dir():
+                continue
+            name = chat_dir.name
+            if len(name) < 11 or name[10] != "-":
+                continue
+            date = name[:10]
+            slug = name[11:]
+            if cutoff and date < cutoff:
+                continue
+            jfile = chat_dir / "journal.md"
+            if not jfile.is_file():
+                continue
+            try:
+                text = jfile.read_text(encoding="utf-8").strip()
+            except OSError:
+                continue
+            if text:
+                entries.append((date, repo, slug, text))
+
+    if not entries:
+        print("(no journal entries match)")
+        return
+
+    entries.sort(key=lambda e: (e[0], e[1], e[2]), reverse=True)
+
+    current_date: str | None = None
+    for date, repo, slug, text in entries:
+        if date != current_date:
+            if current_date is not None:
+                print()
+            print(f"## {date}\n")
+            current_date = date
+        print(f"### {repo} — {slug}\n")
+        print(text)
+        print()
+
+
 def cmd_install_skills(args: argparse.Namespace) -> None:
     for dest in install_skills(args.dest):
         print(f"installed: {dest}")
@@ -399,6 +456,14 @@ def main() -> None:
                       help="only show chats from the last N days")
     _add_root_args(p_ls)
     p_ls.set_defaults(func=cmd_ls)
+
+    p_jrnl = sub.add_parser("journal", help="Print collected journal.md entries grouped by date")
+    p_jrnl.add_argument("--repo", default=None,
+                        help="limit to one repo (default: all repos)")
+    p_jrnl.add_argument("--days", type=int, default=None,
+                        help="only show entries from the last N days")
+    _add_root_args(p_jrnl)
+    p_jrnl.set_defaults(func=cmd_journal)
 
     p_inst = sub.add_parser("install-skills", help="Install Claude Code skill into ~/.claude/skills/")
     p_inst.add_argument("--dest", type=Path, default=None,

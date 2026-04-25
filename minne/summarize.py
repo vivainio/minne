@@ -31,17 +31,25 @@ tldr: <one sentence, max ~100 chars, plain text, no surrounding quotes, what hap
 - <keyword or phrase>
 - ...
 
-The `tldr` is the only place where outcome / what-was-done belongs. The body
-below the front matter must stay topic-only.
+===JOURNAL===
+<2-4 sentences, first person ("I dug into…", "I ended up…"), past tense,
+plain prose, the kind of thing a developer would write in a personal diary
+at the end of the day: what was the goal, what was actually done, any
+gotcha or insight worth remembering. No bullet lists, no headings, no
+meta-commentary about this prompt.>
+
+The `tldr` is the only place in the front matter where outcome belongs.
+The body above ===JOURNAL=== must stay topic-only. Everything outcome,
+narrative, and lesson goes BELOW the ===JOURNAL=== marker.
 
 Keywords should be actual terms present or implied: project/tool names,
 technologies, libraries, file paths, commands, error messages, domain terms,
 jargon, problems, questions, concepts that came up — even dropped ones.
 Names of people, services, repos, tickets if any.
 
-Do NOT include in the body: decisions, conclusions, what was built,
-recommendations, next steps, meta-commentary, prose, preamble, or closing
-remarks.
+Do NOT include in the body above ===JOURNAL===: decisions, conclusions,
+what was built, recommendations, next steps, meta-commentary, prose,
+preamble, or closing remarks.
 
 <transcript>
 """
@@ -51,6 +59,20 @@ PROMPT_TAIL = "\n</transcript>\n"
 _SLUG_RE = re.compile(r"^slug:\s*(.+?)\s*$", re.MULTILINE)
 _STARTED_RE = re.compile(r"^started:\s*(\S+)", re.MULTILINE)
 _SAFE_SLUG = re.compile(r"[^a-z0-9-]+")
+_JOURNAL_MARKER = re.compile(r"^={3,}\s*JOURNAL\s*={3,}\s*$", re.MULTILINE)
+
+
+def _split_journal(text: str) -> tuple[str, str | None]:
+    """Split the model output on the ===JOURNAL=== marker.
+
+    Returns (summary, journal_or_None). Journal is `None` when the marker
+    is missing (older summaries, or the model dropped it)."""
+    m = _JOURNAL_MARKER.search(text)
+    if not m:
+        return text, None
+    summary = text[:m.start()].rstrip() + "\n"
+    journal = text[m.end():].lstrip()
+    return summary, journal or None
 
 
 def _front_matter(text: str) -> str:
@@ -113,7 +135,7 @@ def summarize_file(
         capture_output=True,
         text=True,
     )
-    summary = out.stdout
+    summary, journal = _split_journal(out.stdout)
 
     started = _extract_started(_front_matter(transcript_text))
     if started:
@@ -143,12 +165,18 @@ def summarize_file(
                         pass
             summary_path = target_dir / "summary.md"
             summary_path.write_text(summary, encoding="utf-8")
+            if journal:
+                (target_dir / "journal.md").write_text(journal, encoding="utf-8")
             return summary_path
 
     # fallback: no slug, leave layout as-is
     if in_session_dir:
         summary_path = transcript.with_name("summary.md")
+        journal_path = transcript.with_name("journal.md")
     else:
         summary_path = transcript.with_name(f"{transcript.stem}.summary.md")
+        journal_path = transcript.with_name(f"{transcript.stem}.journal.md")
     summary_path.write_text(summary, encoding="utf-8")
+    if journal:
+        journal_path.write_text(journal, encoding="utf-8")
     return summary_path
