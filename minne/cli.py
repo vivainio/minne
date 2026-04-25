@@ -1,4 +1,5 @@
 import argparse
+import re
 from collections import Counter
 from pathlib import Path
 
@@ -23,18 +24,36 @@ def cmd_scan(args: argparse.Namespace) -> None:
         print(f"  {f.name}  ({total} records)  {summary}")
 
 
+def _existing_by_session_id(inbox: Path) -> dict[str, Path]:
+    """Map session_id -> existing transcript path, scanning front matter."""
+    out: dict[str, Path] = {}
+    for p in inbox.glob("*.md"):
+        if p.name.endswith(".summary.md"):
+            continue
+        try:
+            head = p.read_text(encoding="utf-8", errors="replace")[:512]
+        except OSError:
+            continue
+        m = re.search(r"^session_id:\s*(\S+)", head, re.MULTILINE)
+        if m:
+            out[m.group(1)] = p
+    return out
+
+
 def cmd_ingest(args: argparse.Namespace) -> None:
     pdir = project_dir_for_cwd(args.cwd)
     inbox: Path = args.inbox
     inbox.mkdir(parents=True, exist_ok=True)
+    existing = _existing_by_session_id(inbox)
     written = 0
     skipped = 0
     for f in iter_session_files(pdir):
+        session_id = f.stem
         md = render_session(iter_records(f))
         if not md:
             skipped += 1
             continue
-        out = inbox / f"{f.stem}.md"
+        out = existing.get(session_id, inbox / f"{session_id}.md")
         out.write_text(md, encoding="utf-8")
         print(f"  wrote {out}  ({len(md)} bytes)")
         written += 1

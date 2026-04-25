@@ -42,18 +42,19 @@ next steps, meta-commentary, prose, preamble, or closing remarks.
 PROMPT_TAIL = "\n</transcript>\n"
 
 _SLUG_RE = re.compile(r"^slug:\s*(.+?)\s*$", re.MULTILINE)
+_STARTED_RE = re.compile(r"^started:\s*(\S+)", re.MULTILINE)
 _SAFE_SLUG = re.compile(r"[^a-z0-9-]+")
 
 
-def _extract_slug(summary: str) -> str | None:
-    """Pull `slug: ...` from the YAML front matter, if present and well-formed."""
-    if not summary.startswith("---"):
-        return None
-    end = summary.find("\n---", 3)
-    if end < 0:
-        return None
-    head = summary[:end]
-    m = _SLUG_RE.search(head)
+def _front_matter(text: str) -> str:
+    if not text.startswith("---"):
+        return ""
+    end = text.find("\n---", 3)
+    return text[:end] if end >= 0 else ""
+
+
+def _extract_slug(fm: str) -> str | None:
+    m = _SLUG_RE.search(fm)
     if not m:
         return None
     raw = m.group(1).strip().strip('"\'').lower()
@@ -61,28 +62,57 @@ def _extract_slug(summary: str) -> str | None:
     return cleaned or None
 
 
+def _extract_started(fm: str) -> str | None:
+    m = _STARTED_RE.search(fm)
+    return m.group(1).strip() if m else None
+
+
+def _inject_started(summary: str, started: str) -> str:
+    """Add `started: <iso>` to the summary's front matter."""
+    if not summary.startswith("---"):
+        return f"---\nstarted: {started}\n---\n{summary}"
+    end = summary.find("\n---", 3)
+    if end < 0:
+        return summary
+    head, rest = summary[:end], summary[end:]
+    if "started:" in head:
+        return summary
+    return f"{head}\nstarted: {started}{rest}"
+
+
 def summarize_file(transcript: Path, model: str = HAIKU_MODEL) -> Path:
-    """Run `claude -p` on the transcript, write `<stem>.summary.md` next to it,
-    then rename it to `<slug>.summary.md` if the model proposed a slug.
-    Falls back to the session-id stem on slug collision."""
+    """Summarize `transcript`, writing a sibling `<stem>.summary.md`. If the
+    model proposes a slug and the transcript has a `started:` date, rename
+    BOTH transcript and summary to `<YYYY-MM-DD>-<slug>.{md,summary.md}`.
+    Returns the final summary path."""
     if shutil.which("claude") is None:
         raise RuntimeError("`claude` CLI not found on PATH")
-    text = transcript.read_text(encoding="utf-8")
+    transcript_text = transcript.read_text(encoding="utf-8")
     out = subprocess.run(
         ["claude", "--tools", "", "--model", model, "-p",
-         PROMPT_HEAD + text + PROMPT_TAIL],
+         PROMPT_HEAD + transcript_text + PROMPT_TAIL],
         check=True,
         capture_output=True,
         text=True,
     )
     summary = out.stdout
+
+    started = _extract_started(_front_matter(transcript_text))
+    if started:
+        summary = _inject_started(summary, started)
+
     summary_path = transcript.with_suffix(".summary.md")
     summary_path.write_text(summary, encoding="utf-8")
 
-    slug = _extract_slug(summary)
-    if slug:
-        renamed = summary_path.with_name(f"{slug}.summary.md")
-        if not renamed.exists() or renamed == summary_path:
-            summary_path.rename(renamed)
-            return renamed
+    slug = _extract_slug(_front_matter(summary))
+    date = started[:10] if started and len(started) >= 10 else None
+    if slug and date:
+        new_stem = f"{date}-{slug}"
+        new_transcript = transcript.with_name(f"{new_stem}.md")
+        new_summary = transcript.with_name(f"{new_stem}.summary.md")
+        if new_transcript != transcript and not new_transcript.exists():
+            transcript.rename(new_transcript)
+        if new_summary != summary_path and not new_summary.exists():
+            summary_path.rename(new_summary)
+            return new_summary
     return summary_path
