@@ -1,6 +1,7 @@
 import argparse
 import os
 import re
+import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
@@ -269,10 +270,18 @@ def _tldr_of(chat_dir: Path) -> str | None:
     return m.group(1).strip().strip('"\'') if m else None
 
 
-def cmd_ls(args: argparse.Namespace) -> None:
-    store: Path = args.store
-    repo = args.repo or resolve_repo(str(args.cwd or Path.cwd()))
+def _in_git_repo(cwd: Path) -> bool:
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(cwd), "rev-parse", "--is-inside-work-tree"],
+            check=True, capture_output=True, text=True,
+        )
+        return out.stdout.strip() == "true"
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return False
 
+
+def _list_one_repo(store: Path, repo: str, cutoff: str | None) -> bool:
     chat_root = store / "chats" / repo
     clip_root = store / "clips" / repo
 
@@ -281,29 +290,60 @@ def cmd_ls(args: argparse.Namespace) -> None:
         key=lambda d: d.name,
         reverse=True,
     ) if chat_root.is_dir() else []
-
-    print(f"repo: {repo}")
-    print(f"  store: {store}")
-
-    if chat_dirs:
-        print(f"\nchats ({len(chat_dirs)}):")
-        for d in chat_dirs:
-            clips = sorted((d / "clips").glob("*.md")) if (d / "clips").is_dir() else []
-            tag = f"  [{len(clips)} clip{'s' if len(clips) != 1 else ''}]" if clips else ""
-            print(f"  {d.name}{tag}")
-            tldr = _tldr_of(d)
-            if tldr:
-                print(f"      {tldr}")
-            for c in clips:
-                print(f"    - {c.name}")
-    else:
-        print("\nchats: (none)")
+    if cutoff:
+        chat_dirs = [d for d in chat_dirs if d.name[:10] >= cutoff]
 
     orphan_clips = sorted(clip_root.glob("*.md")) if clip_root.is_dir() else []
+
+    if not chat_dirs and not orphan_clips:
+        return False
+
+    print(f"\n{repo}/")
+    for d in chat_dirs:
+        clips = sorted((d / "clips").glob("*.md")) if (d / "clips").is_dir() else []
+        tag = f"  [{len(clips)} clip{'s' if len(clips) != 1 else ''}]" if clips else ""
+        print(f"  {d.name}{tag}")
+        tldr = _tldr_of(d)
+        if tldr:
+            print(f"      {tldr}")
+        for c in clips:
+            print(f"    - {c.name}")
     if orphan_clips:
-        print(f"\nclips, no chat ({len(orphan_clips)}):")
+        print(f"  clips (no chat):")
         for c in orphan_clips:
-            print(f"  {c.name}")
+            print(f"    - {c.name}")
+    return True
+
+
+def cmd_ls(args: argparse.Namespace) -> None:
+    store: Path = args.store
+    cwd = args.cwd or Path.cwd()
+    cutoff: str | None = None
+    if args.days:
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=args.days)).date().isoformat()
+
+    if args.repo:
+        repos = [args.repo]
+        scope = f"repo: {args.repo}"
+    elif _in_git_repo(cwd):
+        repos = [resolve_repo(str(cwd))]
+        scope = f"repo: {repos[0]} (cwd is in a git work tree)"
+    else:
+        chats_root = store / "chats"
+        repos = sorted(d.name for d in chats_root.glob("*") if d.is_dir()) if chats_root.is_dir() else []
+        scope = f"all repos ({len(repos)})"
+
+    print(scope)
+    print(f"store: {store}")
+    if cutoff:
+        print(f"since: {cutoff}")
+
+    any_listed = False
+    for repo in repos:
+        if _list_one_repo(store, repo, cutoff):
+            any_listed = True
+    if not any_listed:
+        print("\n(nothing to show)")
 
 
 def cmd_install_skills(args: argparse.Namespace) -> None:
@@ -354,7 +394,9 @@ def main() -> None:
     p_ls.add_argument("--cwd", type=Path, default=None,
                       help="treat as if run from this dir (for repo resolution)")
     p_ls.add_argument("--repo", default=None,
-                      help="repo name to list (default: resolve from cwd)")
+                      help="repo name to list (default: resolve from cwd; all repos when cwd is not a git work tree)")
+    p_ls.add_argument("--days", type=int, default=None,
+                      help="only show chats from the last N days")
     _add_root_args(p_ls)
     p_ls.set_defaults(func=cmd_ls)
 
