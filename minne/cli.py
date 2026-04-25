@@ -222,6 +222,63 @@ def cmd_add(args: argparse.Namespace) -> None:
     print(f"added {out}")
 
 
+_TLDR_RE = re.compile(r"^tldr:\s*(.+?)\s*$", re.MULTILINE)
+
+
+def _tldr_of(chat_dir: Path) -> str | None:
+    summary = chat_dir / "summary.md"
+    if not summary.is_file():
+        return None
+    try:
+        head = summary.read_text(encoding="utf-8", errors="replace")[:1000]
+    except OSError:
+        return None
+    if not head.startswith("---"):
+        return None
+    end = head.find("\n---", 3)
+    if end < 0:
+        return None
+    m = _TLDR_RE.search(head[:end])
+    return m.group(1).strip().strip('"\'') if m else None
+
+
+def cmd_ls(args: argparse.Namespace) -> None:
+    store: Path = args.store
+    repo = args.repo or resolve_repo(str(args.cwd or Path.cwd()))
+
+    chat_root = store / "chats" / repo
+    clip_root = store / "clips" / repo
+
+    chat_dirs = sorted(
+        (d for d in chat_root.glob("*") if d.is_dir()),
+        key=lambda d: d.name,
+        reverse=True,
+    ) if chat_root.is_dir() else []
+
+    print(f"repo: {repo}")
+    print(f"  store: {store}")
+
+    if chat_dirs:
+        print(f"\nchats ({len(chat_dirs)}):")
+        for d in chat_dirs:
+            clips = sorted((d / "clips").glob("*.md")) if (d / "clips").is_dir() else []
+            tag = f"  [{len(clips)} clip{'s' if len(clips) != 1 else ''}]" if clips else ""
+            print(f"  {d.name}{tag}")
+            tldr = _tldr_of(d)
+            if tldr:
+                print(f"      {tldr}")
+            for c in clips:
+                print(f"    - {c.name}")
+    else:
+        print("\nchats: (none)")
+
+    orphan_clips = sorted(clip_root.glob("*.md")) if clip_root.is_dir() else []
+    if orphan_clips:
+        print(f"\nclips, no chat ({len(orphan_clips)}):")
+        for c in orphan_clips:
+            print(f"  {c.name}")
+
+
 def cmd_install_skills(args: argparse.Namespace) -> None:
     for dest in install_skills(args.dest):
         print(f"installed: {dest}")
@@ -265,6 +322,14 @@ def main() -> None:
                        help="treat as if run from this dir (for repo/branch resolution)")
     _add_root_args(p_add)
     p_add.set_defaults(func=cmd_add)
+
+    p_ls = sub.add_parser("ls", help="List store objects (chats and clips) for a repo")
+    p_ls.add_argument("--cwd", type=Path, default=None,
+                      help="treat as if run from this dir (for repo resolution)")
+    p_ls.add_argument("--repo", default=None,
+                      help="repo name to list (default: resolve from cwd)")
+    _add_root_args(p_ls)
+    p_ls.set_defaults(func=cmd_ls)
 
     p_inst = sub.add_parser("install-skills", help="Install Claude Code skill into ~/.claude/skills/")
     p_inst.add_argument("--dest", type=Path, default=None,
