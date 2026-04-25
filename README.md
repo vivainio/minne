@@ -14,6 +14,8 @@ pipx install minne
 
 Optional: the `claude` CLI on `PATH` (only used by `minne digest`). Digestion runs through the Claude Code subscription, not the API.
 
+No Claude subscription? `minne digest` can shell out to GitHub Copilot CLI instead. Set `backend = "copilot"` under `[digest]` in `~/.config/minne/config.toml` (auto-created on first run) and pick a model. Copilot CLI must be on `PATH` and authenticated with `gh auth login`. Use a 0× / "included" model — e.g. `model = "gpt-4.1"` — so bulk digesting doesn't burn your premium-request quota; check the current included-model list in GitHub's Copilot billing docs, since the multipliers shift over time.
+
 ## Commands
 
 ```bash
