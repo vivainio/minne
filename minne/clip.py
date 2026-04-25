@@ -1,8 +1,10 @@
-"""Capture a text clip into <inbox>/clips/<repo>/<uuid>.json with metadata."""
+"""Capture a text clip into <inbox>/clips/<repo>/<uuid>.json with metadata,
+and digest it into markdown under the store."""
 
 from datetime import datetime, timezone
 from pathlib import Path
 import json
+import os
 import re
 import socket
 import subprocess
@@ -72,4 +74,75 @@ def add_clip(text: str, source: str, cwd: Path, inbox: Path) -> Path:
     hint = _hint_slug(source, text)
     out = out_dir / f"{hint}-{clip_id[:8]}.json"
     out.write_text(json.dumps(envelope, indent=2), encoding="utf-8")
+    return out
+
+
+_SESSION_ID_RE = re.compile(r"^session_id:\s*(\S+)\s*$", re.MULTILINE)
+
+
+def _index_chats_by_session(store: Path, repo: str) -> dict[str, Path]:
+    """Map session_id → chat directory for digested chats in this repo."""
+    repo_root = store / "chats" / repo
+    if not repo_root.is_dir():
+        return {}
+    index: dict[str, Path] = {}
+    for chat in repo_root.glob("*/chat.md"):
+        try:
+            head = chat.read_text(encoding="utf-8", errors="replace")[:2000]
+        except OSError:
+            continue
+        if not head.startswith("---"):
+            continue
+        end = head.find("\n---", 3)
+        if end < 0:
+            continue
+        m = _SESSION_ID_RE.search(head[:end])
+        if m:
+            index[m.group(1)] = chat.parent
+    return index
+
+
+def _render_clip_md(envelope: dict, chat_link: str | None) -> str:
+    fm: list[str] = ["---"]
+    for key in ("id", "captured", "source", "repo", "branch", "session_id", "host"):
+        v = envelope.get(key)
+        if v:
+            fm.append(f"{key}: {v}")
+    if chat_link:
+        fm.append(f"chat: {chat_link}")
+    fm.append("---")
+    text = (envelope.get("text") or "").rstrip("\n")
+    return "\n".join(fm) + "\n\n" + text + "\n"
+
+
+def digest_clip(
+    json_path: Path,
+    store: Path,
+    chat_index: dict[str, Path] | None = None,
+) -> Path:
+    """Render an inbox clip JSON to markdown under the store.
+
+    If the clip's session_id matches a digested chat in this repo, the
+    markdown lands at `store/chats/<repo>/<date>-<slug>/clips/<name>.md`
+    with a relative link back to `chat.md`. Otherwise it lands at
+    `store/clips/<repo>/<name>.md`. The source JSON is removed on success."""
+    envelope = json.loads(json_path.read_text(encoding="utf-8"))
+    repo = envelope.get("repo") or "unknown"
+    session_id = envelope.get("session_id")
+
+    if chat_index is None:
+        chat_index = _index_chats_by_session(store, repo)
+    chat_dir = chat_index.get(session_id) if session_id else None
+
+    if chat_dir is not None:
+        out_dir = chat_dir / "clips"
+        chat_link = os.path.relpath(chat_dir / "chat.md", out_dir)
+    else:
+        out_dir = store / "clips" / repo
+        chat_link = None
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out = out_dir / f"{json_path.stem}.md"
+    out.write_text(_render_clip_md(envelope, chat_link), encoding="utf-8")
+    json_path.unlink()
     return out

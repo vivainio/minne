@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from minne.clip import add_clip
+from minne.clip import add_clip, digest_clip
 from minne.install import install_skills
 from minne.reader import iter_records, iter_session_files, project_dir_for_cwd, projects_root
 from minne.render import render_session
@@ -154,9 +154,6 @@ def cmd_digest(args: argparse.Namespace) -> None:
             cutoff = _parse_since(args.since)
             chats = [p for p in chats if (s := _started_of(p)) and s >= cutoff]
         targets = chats
-        if not targets:
-            print("nothing to digest")
-            return
 
     jobs = max(1, args.jobs)
 
@@ -167,7 +164,7 @@ def cmd_digest(args: argparse.Namespace) -> None:
         except BaseException as e:
             return t, None, e
 
-    if jobs == 1:
+    if targets and jobs == 1:
         for t in targets:
             print(f"digesting {t} ...", flush=True)
             _, out, err = _one(t)
@@ -175,17 +172,40 @@ def cmd_digest(args: argparse.Namespace) -> None:
                 print(f"  failed: {err}", file=sys.stderr, flush=True)
             else:
                 print(f"  wrote {out}", flush=True)
-        return
+    elif targets:
+        print(f"digesting {len(targets)} transcripts with {jobs} workers ...", flush=True)
+        with ThreadPoolExecutor(max_workers=jobs) as ex:
+            futures = [ex.submit(_one, t) for t in targets]
+            for fut in as_completed(futures):
+                t, out, err = fut.result()
+                if err is not None:
+                    print(f"  failed {t}: {err}", file=sys.stderr, flush=True)
+                else:
+                    print(f"  wrote {out}", flush=True)
 
-    print(f"digesting {len(targets)} transcripts with {jobs} workers ...", flush=True)
-    with ThreadPoolExecutor(max_workers=jobs) as ex:
-        futures = [ex.submit(_one, t) for t in targets]
-        for fut in as_completed(futures):
-            t, out, err = fut.result()
-            if err is not None:
-                print(f"  failed {t}: {err}", file=sys.stderr, flush=True)
-            else:
+    _digest_clips(inbox, store)
+
+
+def _digest_clips(inbox: Path, store: Path) -> None:
+    clips_root = inbox / "clips"
+    if not clips_root.is_dir():
+        return
+    by_repo: dict[str, list[Path]] = {}
+    for p in clips_root.rglob("*.json"):
+        by_repo.setdefault(p.parent.name, []).append(p)
+    if not by_repo:
+        return
+    total = sum(len(v) for v in by_repo.values())
+    print(f"digesting {total} clips ...", flush=True)
+    from minne.clip import _index_chats_by_session
+    for repo, paths in by_repo.items():
+        index = _index_chats_by_session(store, repo)
+        for p in paths:
+            try:
+                out = digest_clip(p, store, chat_index=index)
                 print(f"  wrote {out}", flush=True)
+            except BaseException as e:
+                print(f"  failed {p}: {e}", file=sys.stderr, flush=True)
 
 
 def cmd_add(args: argparse.Namespace) -> None:

@@ -33,27 +33,33 @@ Skip for trivial Q&A or anything already obvious from the code or git history.
 
 ## Search memories
 
-The store is plain markdown under `~/minne/store/` (chats live in `store/chats/<repo>/<date>-<slug>/{chat.md,summary.md}`; clips live alongside). Search it with normal tools:
+The store is plain markdown under `~/minne/store/`. Two kinds of memory live there:
+
+- **Clips** — explicit memos the user (or you) chose to save via `minne add`. Live at `store/clips/<repo>/<name>.md` or, when correlated with a chat, at `store/chats/<repo>/<date>-<slug>/clips/<name>.md` with a `chat:` link back to the conversation.
+- **Chats** — full digested conversations at `store/chats/<repo>/<date>-<slug>/{chat.md,summary.md}`. Big, noisy, full of incidental detail.
+
+**Search clips first.** They are deliberate, hand-curated signal — a hit there is almost always more relevant than a hit in chat transcripts. Only fall back to chats if clips don't answer the question.
 
 ```bash
-rg -i "KEYWORDS" ~/minne/store/                      # full-text
-rg -il "KEYWORDS" ~/minne/store/                     # filenames only
-rg -i "KEYWORDS" ~/minne/store/chats/<repo>/         # scope to one project
-fd . ~/minne/store/ -e md | head                     # browse
+rg -il "KEYWORDS" ~/minne/store/ -g '**/clips/**' -g '!chats/**/chat.md'  # clips only
+rg -il "KEYWORDS" ~/minne/store/                                          # everything
+rg -i  "KEYWORDS" ~/minne/store/chats/<repo>/                             # scope to one project
+fd . ~/minne/store/ -e md | head                                          # browse
 ```
 
 Workflow:
 
 1. Pick 2–3 distinct keywords from the user's question (names, errors, commands — not generic words).
-2. `rg -il` first to find candidate files, then `Read` the promising ones.
-3. If nothing hits, broaden terms or try `~/minne/inbox/` (undigested material).
-4. Cite the file path back to the user when you use a memory, so they can verify.
+2. Search **clips first** with `rg -il`. If a clip looks relevant, `Read` it; follow the `chat:` link only if you need surrounding context.
+3. If clips don't cover it, widen to all of `~/minne/store/` (chats included).
+4. If still nothing, broaden terms before giving up.
+5. Cite the file path back to the user when you use a memory, so they can verify.
 
 Treat memories as point-in-time notes: a fact recorded six months ago may be stale. If a memory conflicts with what you observe in the live repo, trust the live repo and tell the user the memory looks out of date.
 
-## Output paths (for reference)
+## Store paths (for reference)
 
-- `~/minne/inbox/clips/<repo>/<hint>-<uuid>.json` — fresh clips
-- `~/minne/inbox/chats/<repo>/<session-id>.md` — fresh chat captures
-- `~/minne/store/chats/<repo>/<date>-<slug>/{chat.md, summary.md}` — digested
-- Override with `--inbox` / `--store` or `MINNE_HOME`
+- `~/minne/store/clips/<repo>/<name>.md` — clip not tied to any chat
+- `~/minne/store/chats/<repo>/<date>-<slug>/clips/<name>.md` — clip linked to its chat (frontmatter has `chat: ../chat.md`)
+- `~/minne/store/chats/<repo>/<date>-<slug>/{chat.md, summary.md}` — digested chat
+- Override the root with `--store` or `MINNE_HOME`
