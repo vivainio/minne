@@ -3,6 +3,32 @@
 from collections.abc import Iterable
 
 
+_EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
+
+
+def _extract_edited_files(records: list[dict]) -> list[str]:
+    """Collect distinct file_path values from Edit/Write/MultiEdit/NotebookEdit
+    tool_use blocks, in first-occurrence order."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for r in records:
+        msg = r.get("message") or {}
+        content = msg.get("content", r.get("content"))
+        if not isinstance(content, list):
+            continue
+        for c in content:
+            if not isinstance(c, dict) or c.get("type") != "tool_use":
+                continue
+            if c.get("name") not in _EDIT_TOOLS:
+                continue
+            inp = c.get("input") or {}
+            path = inp.get("file_path") or inp.get("notebook_path")
+            if isinstance(path, str) and path not in seen:
+                seen.add(path)
+                out.append(path)
+    return out
+
+
 def _extract_text_blocks(content: object) -> list[str]:
     """Pull only `text` blocks from a message's content. Drop tool_use,
     tool_result, thinking, and other structural blocks."""
@@ -52,6 +78,11 @@ def _front_matter(records: list[dict]) -> str:
         lines.append("cwds:")
         for c in cwds:
             lines.append(f"  - {c}")
+    edited = _extract_edited_files(records)
+    if edited:
+        lines.append("files_edited:")
+        for p in edited:
+            lines.append(f"  - {p}")
     lines.append("---")
     return "\n".join(lines) + "\n"
 
