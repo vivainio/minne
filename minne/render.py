@@ -6,9 +6,11 @@ from collections.abc import Iterable
 _EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
 
 
-def _extract_edited_files(records: list[dict]) -> list[str]:
+def _extract_edited_files(records: list[dict], cwds: list[str]) -> list[str]:
     """Collect distinct file_path values from Edit/Write/MultiEdit/NotebookEdit
-    tool_use blocks, in first-occurrence order."""
+    tool_use blocks, in first-occurrence order. Only paths under one of the
+    session's cwds are kept (so /tmp scratch files are dropped)."""
+    roots = [c.rstrip("/") + "/" for c in cwds if c]
     seen: set[str] = set()
     out: list[str] = []
     for r in records:
@@ -23,9 +25,12 @@ def _extract_edited_files(records: list[dict]) -> list[str]:
                 continue
             inp = c.get("input") or {}
             path = inp.get("file_path") or inp.get("notebook_path")
-            if isinstance(path, str) and path not in seen:
-                seen.add(path)
-                out.append(path)
+            if not isinstance(path, str) or path in seen:
+                continue
+            if roots and not any(path == r[:-1] or path.startswith(r) for r in roots):
+                continue
+            seen.add(path)
+            out.append(path)
     return out
 
 
@@ -78,7 +83,7 @@ def _front_matter(records: list[dict]) -> str:
         lines.append("cwds:")
         for c in cwds:
             lines.append(f"  - {c}")
-    edited = _extract_edited_files(records)
+    edited = _extract_edited_files(records, cwds)
     if edited:
         lines.append("files_edited:")
         for p in edited:
