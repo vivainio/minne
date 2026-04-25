@@ -1,12 +1,18 @@
 import argparse
+import os
 import re
 from collections import Counter
 from pathlib import Path
 
 from minne.install import install_skills
-from minne.reader import iter_records, iter_session_files, project_dir_for_cwd
+from minne.reader import iter_records, iter_session_files, project_dir_for_cwd, projects_root
 from minne.render import render_session
+from minne.repo import resolve_repo
 from minne.summarize import summarize_file
+
+
+def default_inbox() -> Path:
+    return Path(os.environ.get("MINNE_HOME", str(Path.home() / "minne"))) / "inbox"
 
 
 def cmd_scan(args: argparse.Namespace) -> None:
@@ -25,9 +31,9 @@ def cmd_scan(args: argparse.Namespace) -> None:
 
 
 def _existing_by_session_id(inbox: Path) -> dict[str, Path]:
-    """Map session_id -> existing transcript path, scanning front matter."""
+    """Map session_id -> existing transcript path, walking the inbox tree."""
     out: dict[str, Path] = {}
-    for p in inbox.glob("*.md"):
+    for p in inbox.rglob("*.md"):
         if p.name.endswith(".summary.md"):
             continue
         try:
@@ -40,23 +46,45 @@ def _existing_by_session_id(inbox: Path) -> dict[str, Path]:
     return out
 
 
+def _first_cwd(records: list[dict]) -> str | None:
+    for r in records:
+        cwd = r.get("cwd")
+        if isinstance(cwd, str):
+            return cwd
+    return None
+
+
+def _project_dirs(args: argparse.Namespace) -> list[Path]:
+    if args.cwd is not None:
+        return [project_dir_for_cwd(args.cwd)]
+    root = projects_root()
+    return sorted([d for d in root.iterdir() if d.is_dir()]) if root.is_dir() else []
+
+
 def cmd_ingest(args: argparse.Namespace) -> None:
-    pdir = project_dir_for_cwd(args.cwd)
     inbox: Path = args.inbox
     inbox.mkdir(parents=True, exist_ok=True)
     existing = _existing_by_session_id(inbox)
     written = 0
     skipped = 0
-    for f in iter_session_files(pdir):
-        session_id = f.stem
-        md = render_session(iter_records(f))
-        if not md:
-            skipped += 1
-            continue
-        out = existing.get(session_id, inbox / f"{session_id}.md")
-        out.write_text(md, encoding="utf-8")
-        print(f"  wrote {out}  ({len(md)} bytes)")
-        written += 1
+    for pdir in _project_dirs(args):
+        for f in iter_session_files(pdir):
+            session_id = f.stem
+            records = list(iter_records(f))
+            md = render_session(records)
+            if not md:
+                skipped += 1
+                continue
+            if session_id in existing:
+                out = existing[session_id]
+            else:
+                repo = resolve_repo(_first_cwd(records))
+                repo_dir = inbox / repo
+                repo_dir.mkdir(parents=True, exist_ok=True)
+                out = repo_dir / f"{session_id}.md"
+            out.write_text(md, encoding="utf-8")
+            print(f"  wrote {out}  ({len(md)} bytes)")
+            written += 1
     print(f"done: {written} written, {skipped} empty, into {inbox}")
 
 
@@ -65,7 +93,7 @@ def cmd_summarize(args: argparse.Namespace) -> None:
     if target.is_file():
         targets = [target]
     else:
-        mds = sorted(target.glob("*.md"), key=lambda p: p.stat().st_mtime)
+        mds = sorted(target.rglob("*.md"), key=lambda p: p.stat().st_mtime)
         targets = [p for p in mds if not p.name.endswith(".summary.md")]
         if not args.all:
             targets = [p for p in targets if not p.with_suffix(".summary.md").exists()]
@@ -92,14 +120,16 @@ def main() -> None:
     p_scan.add_argument("--cwd", type=Path, default=None)
     p_scan.set_defaults(func=cmd_scan)
 
-    p_ing = sub.add_parser("ingest", help="Write per-session markdown into inbox/")
-    p_ing.add_argument("--cwd", type=Path, default=None)
-    p_ing.add_argument("--inbox", type=Path, default=Path("inbox"))
+    p_ing = sub.add_parser("ingest", help="Ingest sessions into <inbox>/<repo>/")
+    p_ing.add_argument("--cwd", type=Path, default=None,
+                       help="only ingest sessions from this cwd (default: all projects)")
+    p_ing.add_argument("--inbox", type=Path, default=default_inbox(),
+                       help=f"inbox root (default: $MINNE_HOME/inbox or ~/minne/inbox)")
     p_ing.set_defaults(func=cmd_ingest)
 
-    p_sum = sub.add_parser("summarize", help="Summarize transcripts in inbox/ via `claude -p` Haiku")
-    p_sum.add_argument("path", type=Path, nargs="?", default=Path("inbox"),
-                       help="transcript file, or directory (default: inbox/)")
+    p_sum = sub.add_parser("summarize", help="Summarize transcripts via `claude -p` Haiku")
+    p_sum.add_argument("path", type=Path, nargs="?", default=default_inbox(),
+                       help="transcript file, or directory tree (default: inbox)")
     p_sum.add_argument("--all", action="store_true",
                        help="re-summarize even if .summary.md already exists")
     p_sum.set_defaults(func=cmd_summarize)

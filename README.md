@@ -17,11 +17,15 @@ Optional dependency: the `claude` CLI on PATH (only used by `minne summarize`). 
 ## Use
 
 ```bash
-minne ingest          # writes inbox/<session-id>.md per session for cwd
-minne summarize       # writes inbox/<session-id>.summary.md for any transcript missing one
-minne scan            # show record-type counts per session for cwd
+minne ingest          # ingest every Claude Code session into ~/minne/inbox/<repo>/
+minne summarize       # produce sibling .summary.md for every transcript missing one
+minne scan            # record-type counts for the cwd's project dir
 minne install-skills  # install the bundled "minne" Claude Code skill into ~/.claude/skills/
 ```
+
+`minne` is a global tool: by default it walks every project under `~/.claude/projects/` and groups transcripts into `~/minne/inbox/<repo>/` (resolving the project's cwd via `git rev-parse --show-toplevel`, falling back to the dir basename, or `_unknown/` if the path is gone). Override the inbox root with `--inbox PATH` or `MINNE_HOME`.
+
+`--cwd PATH` restricts ingest to a single project dir.
 
 After `install-skills`, the agent itself can invoke `minne ingest && minne summarize` at the end of a non-trivial work session.
 
@@ -47,12 +51,16 @@ Summaries are written by Haiku and meant to be searched, not read. They describe
 ## Layout
 
 ```
-./inbox/
-├── 7890dec8-….md          # full transcript
-└── 7890dec8-….summary.md  # keyword index
+~/minne/inbox/
+├── minne/
+│   ├── 2026-04-25-minne-conversation-indexing.md
+│   └── 2026-04-25-minne-conversation-indexing.summary.md
+├── nspect/
+│   └── ...
+└── _unknown/   # sessions whose original cwd no longer exists
 ```
 
-`./inbox/` is gitignored by default (in this repo).
+After summarization, transcripts are renamed to `<YYYY-MM-DD>-<slug>.{md,summary.md}` (slug proposed by Haiku). Re-running `minne ingest` finds the renamed files via `session_id:` in their YAML front matter and updates them in place — no duplicates.
 
 ## Requirements
 
