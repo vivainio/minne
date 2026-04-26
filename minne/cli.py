@@ -314,17 +314,23 @@ def cmd_digest(args: argparse.Namespace) -> None:
             if repo == NOGIT:
                 target_dir = store / "chats" / "nogit"
                 cats = _existing_nogit_categories(store)
-                return t, summarize_file(
+                return (
                     t,
-                    target_repo_dir=target_dir,
-                    backend=backend,
-                    model=model,
-                    nogit_categories=cats,
-                ), None
+                    summarize_file(
+                        t,
+                        target_repo_dir=target_dir,
+                        backend=backend,
+                        model=model,
+                        nogit_categories=cats,
+                    ),
+                    None,
+                )
             target_dir = store / "chats" / repo
-            return t, summarize_file(
-                t, target_repo_dir=target_dir, backend=backend, model=model
-            ), None
+            return (
+                t,
+                summarize_file(t, target_repo_dir=target_dir, backend=backend, model=model),
+                None,
+            )
         except BaseException as e:
             return t, None, e
 
