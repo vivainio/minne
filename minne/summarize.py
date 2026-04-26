@@ -22,6 +22,7 @@ def _build_cmd(backend: str, model: str, prompt: str) -> list[str]:
         return ["copilot", "--allow-all-tools", "--model", model, "-p", prompt]
     raise ValueError(f"unknown digest backend: {backend!r}")
 
+
 PROMPT_HEAD = """\
 You are indexing past Claude Code conversations so they can be found later by
 keyword search. Below, between <transcript> tags, is one such conversation.
