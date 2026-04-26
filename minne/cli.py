@@ -162,17 +162,45 @@ def _project_dirs(args: argparse.Namespace) -> list[Path]:
     return sorted([d for d in root.iterdir() if d.is_dir()]) if root.is_dir() else []
 
 
+def _anchor_path(inbox: Path) -> Path:
+    return inbox / ".last-ingest"
+
+
+def _read_anchor(inbox: Path) -> float | None:
+    p = _anchor_path(inbox)
+    try:
+        return float(p.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return None
+
+
+def _write_anchor(inbox: Path, ts: float) -> None:
+    _anchor_path(inbox).write_text(f"{ts}\n", encoding="utf-8")
+
+
 def cmd_ingest(args: argparse.Namespace) -> None:
     inbox: Path = args.inbox
     store: Path = args.store
     inbox.mkdir(parents=True, exist_ok=True)
     existing = _scan_session_ids(inbox, store)
-    cutoff = (datetime.now(UTC) - timedelta(days=args.days)).timestamp() if args.days else None
+    if args.all:
+        cutoff: float | None = None
+    elif args.days is not None:
+        cutoff = (datetime.now(UTC) - timedelta(days=args.days)).timestamp()
+    else:
+        cutoff = _read_anchor(inbox)
+        if cutoff is None:
+            print(
+                "no ingest anchor found; ingesting everything. "
+                "Use --days N or --all to override; future runs will use the anchor."
+            )
     written = 0
     skipped = 0
+    newest = cutoff or 0.0
     for pdir in _project_dirs(args):
         for f in iter_session_files(pdir):
-            if cutoff is not None and f.stat().st_mtime < cutoff:
+            mtime = f.stat().st_mtime
+            if cutoff is not None and mtime < cutoff:
                 continue
             session_id = f.stem
             records = list(iter_records(f))
@@ -193,10 +221,13 @@ def cmd_ingest(args: argparse.Namespace) -> None:
             out.write_text(md, encoding="utf-8")
             print(f"  wrote {out}  ({len(md)} bytes)")
             written += 1
+            if mtime > newest:
+                newest = mtime
 
     if args.cwd is None:
         for sdir in copilot.iter_session_dirs():
-            if cutoff is not None and copilot.session_mtime(sdir) < cutoff:
+            mtime = copilot.session_mtime(sdir)
+            if cutoff is not None and mtime < cutoff:
                 continue
             session_id = sdir.name
             md = copilot.render_session(sdir)
@@ -213,9 +244,12 @@ def cmd_ingest(args: argparse.Namespace) -> None:
             out.write_text(md, encoding="utf-8")
             print(f"  wrote {out}  ({len(md)} bytes)")
             written += 1
+            if mtime > newest:
+                newest = mtime
 
         for storage_dir, jl in vscode.iter_session_jsonls():
-            if cutoff is not None and vscode.session_mtime(jl) < cutoff:
+            mtime = vscode.session_mtime(jl)
+            if cutoff is not None and mtime < cutoff:
                 continue
             session_id = jl.stem
             md = vscode.render_session(jl, storage_dir)
@@ -232,6 +266,11 @@ def cmd_ingest(args: argparse.Namespace) -> None:
             out.write_text(md, encoding="utf-8")
             print(f"  wrote {out}  ({len(md)} bytes)")
             written += 1
+            if mtime > newest:
+                newest = mtime
+
+    if args.cwd is None and newest > 0:
+        _write_anchor(inbox, newest)
 
     print(f"done: {written} written, {skipped} empty")
 
@@ -572,6 +611,11 @@ def main() -> None:
     )
     p_ing.add_argument(
         "--days", type=int, default=None, help="only ingest sessions modified in the last N days"
+    )
+    p_ing.add_argument(
+        "--all",
+        action="store_true",
+        help="ingest all sessions, ignoring the inbox/.last-ingest anchor",
     )
     _add_root_args(p_ing)
     p_ing.set_defaults(func=cmd_ingest)
