@@ -2,14 +2,12 @@
 
 Personal long-term memory for AI coding sessions.
 
-`minne` captures Claude Code (and now GitHub Copilot CLI) conversations into a per-repo `inbox/`, then runs a digest pass that shells out to Haiku to produce a keyword-dense summary, a one-line `tldr`, and a short first-person `journal.md` entry. Digested items live in a searchable `store/` you can grep, list, and read back later. You can also save free-form notes (`minne add`) that get correlated to the conversation they came from.
+`minne` captures Claude Code, GitHub Copilot CLI, and VS Code Copilot Chat conversations into a per-repo `inbox/`, then runs a digest pass that shells out to Haiku to produce a keyword-dense summary, a one-line `tldr`, and a short first-person `journal.md` entry. Digested items live in a searchable `store/` you can grep, list, and read back later. You can also save free-form notes (`minne add`) that get correlated to the conversation they came from.
 
 ## Install
 
 ```bash
 uv tool install minne
-# or
-pipx install minne
 ```
 
 Optional: the `claude` CLI on `PATH` (only used by `minne digest`). Digestion runs through the Claude Code subscription, not the API.
@@ -19,7 +17,7 @@ No Claude subscription? `minne digest` can shell out to GitHub Copilot CLI inste
 ## Commands
 
 ```bash
-minne ingest                # ingest sessions from Claude Code + Copilot CLI into ~/minne/inbox/
+minne ingest                # ingest sessions from Claude Code + Copilot CLI + VS Code Copilot Chat into ~/minne/inbox/
 minne digest                # summarize inbox transcripts into ~/minne/store/ (4 workers by default)
 minne add FILE | -          # save a free-form clip from a file or stdin
 minne ls [--days N]         # list chats and clips in the current repo (or all repos outside one)
@@ -27,7 +25,7 @@ minne journal [--days N]    # print collected first-person diary entries, newest
 minne install-skills        # install the bundled "minne" Claude Code skill into ~/.claude/skills/
 ```
 
-`minne` is a global tool: ingest walks every project under `~/.claude/projects/` and every session under `~/.copilot/session-state/`, grouping transcripts by repo via `git rev-parse --show-toplevel` of each session's cwd. Anything outside a git work tree lands in a `_nogit` bucket and gets classified into a topical category at digest time (see below). Override roots with `--inbox PATH` / `--store PATH` or `MINNE_HOME` (defaults: `~/minne/inbox`, `~/minne/store`).
+`minne` is a global tool: ingest walks every project under `~/.claude/projects/`, every Copilot CLI session under `~/.copilot/session-state/`, and every VS Code Copilot Chat session under VS Code's `workspaceStorage/<id>/chatSessions/` (probed across Linux, macOS, Windows, and WSL ⇄ Windows host paths), grouping transcripts by repo via `git rev-parse --show-toplevel` of each session's cwd. Anything outside a git work tree lands in a `_nogit` bucket and gets classified into a topical category at digest time (see below). Override roots with `--inbox PATH` / `--store PATH` or `MINNE_HOME` (defaults: `~/minne/inbox`, `~/minne/store`).
 
 `--cwd PATH` restricts ingest to a single Claude Code project. `--days N` limits ingest/ls/journal to the last N days. `--since 1d` works on `digest`.
 
@@ -36,6 +34,8 @@ minne install-skills        # install the bundled "minne" Claude Code skill into
 For Claude Code, the renderer keeps `text` blocks from `user` and `assistant` messages and drops tool calls, tool results, thinking blocks, and system-injected (`isMeta`) records. Edited file paths are extracted from `Edit`/`Write`/`MultiEdit`/`NotebookEdit` tool uses and listed in front matter (paths outside the session's cwd are dropped, so `/tmp` scratch files don't pollute the index).
 
 For Copilot CLI, the renderer reads `events.jsonl` and keeps `user.message` / `assistant.message` events.
+
+For VS Code Copilot Chat, the renderer reads each `chatSessions/<sid>.jsonl` and keeps the user prompt and assistant response text from each turn.
 
 Both producers emit the same markdown shape:
 
